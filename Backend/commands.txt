@@ -1,0 +1,16 @@
+# If you're on Windows, you might need to use icacls instead:
+icacls "C:\Users\hamza\Desktop\Desktop-Pc.pem" /inheritance:r
+icacls "C:\Users\hamza\Desktop\Desktop-Pc.pem" /grant:r %username%:R
+
+
+http://127.0.0.1:5000/lambda/instances
+
+
+https://cloud.lambdalabs.com/api/v1/instances
+Authorization Bearer <secret key>
+
+
+
+#example ssh
+ssh -i "C:/Users/hamza/Desktop/Desktop-Pc.pem" ubuntu@192.222.58.34
+ssh -i "<path to pem key>" ubuntu@<ip>
