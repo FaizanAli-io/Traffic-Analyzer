@@ -1,17 +1,17 @@
-# file: lambda_min_api.py
 import os
 import requests
 import time
 import socket
 import paramiko
 from scp import SCPClient
-from flask import Flask, jsonify ,request,send_file
+from flask import Flask, jsonify, request, send_file
 from dotenv import load_dotenv
+from flask_cors import CORS
 
 # Load environment variables from .env file
 load_dotenv()
 
-# --- Config ---
+# --- Configuration ---
 LAMBDA_API_KEY = os.getenv("LAMBDA_API_KEY")
 LAMBDA_BASE_URL = "https://cloud.lambdalabs.com/api/v1"
 
@@ -21,20 +21,79 @@ SSH_KEY_NAMES = ["Desktop-Pc"]
 INSTANCE_NAME = "traffic-analysis-1"
 FIREWALL_RULESETS = [{"id": "7093760c5d4e4df2bf8584ae791526c4"}]
 
-
 # SSH config (update with your key and username)
 SSH_USERNAME = "ubuntu"   # usually "ubuntu"
 SSH_KEY_PATH = "C:/Users/hamza/Desktop/Desktop-Pc.pem"
 
-
+# Directory configuration
 DOWNLOADS_DIR = os.path.join(os.getcwd(), "downloads")
-
+INPUT_VIDEO_DIR = os.path.join(os.getcwd(), "input-video")
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
-OUTPUT_DEFAULT_NAME = "output_detr_motion_filtered.mp4"
-app = Flask(__name__)
 
-# ---------------- Lambda Cloud helpers ----------------
+# File names
+OUTPUT_DEFAULT_NAME = "output_detr_motion_filtered.mp4"
+INSTANCE_INFO_FILE = os.path.join(os.getcwd(), "instance_info.txt")
+
+# Authentication
+ENV_USERNAME = os.getenv("USERID", "")
+ENV_PASSWORD = os.getenv("PASSWORD", "")
+
+# Remote configuration
+REMOTE_DIR = "/home/ubuntu/myjob"
+REMOTE_VENV = f"{REMOTE_DIR}/venv"
+REMOTE_SCRIPT_NAME = "detr_motion.py"
+REMOTE_REQ_NAME = "requirements.txt"
+REMOTE_VIDEO_NAME = "input_video_4.mp4"
+
+# Toggle running after setup
+RUN_AFTER_SETUP = False
+
+# Initialize Flask app
+app = Flask(__name__)
+CORS(app)
+
+
+# ===============================
+# INSTANCE INFO MANAGEMENT
+# ===============================
+
+def save_instance_info(instance_id, ip):
+    """Save instance ID and IP to a text file."""
+    try:
+        with open(INSTANCE_INFO_FILE, "w") as f:
+            f.write(f"instance_id={instance_id}\n")
+            f.write(f"ip={ip}\n")
+    except Exception as e:
+        print(f"Warning: Could not save instance info to {INSTANCE_INFO_FILE}: {e}")
+
+def load_instance_info():
+    """Load instance ID and IP from text file. Returns (instance_id, ip) or (None, None)."""
+    try:
+        if os.path.exists(INSTANCE_INFO_FILE):
+            with open(INSTANCE_INFO_FILE, "r") as f:
+                lines = f.read().strip().split("\n")
+                info = {}
+                for line in lines:
+                    if "=" in line:
+                        key, value = line.split("=", 1)
+                        info[key.strip()] = value.strip()
+                return info.get("instance_id"), info.get("ip")
+    except Exception as e:
+        print(f"Warning: Could not load instance info from {INSTANCE_INFO_FILE}: {e}")
+    return None, None
+
+def get_saved_ip():
+    """Get the saved IP from instance info file."""
+    _, ip = load_instance_info()
+    return ip
+
+
+# ===============================
+# LAMBDA CLOUD API HELPERS
+# ===============================
+
 def cloud_get(path: str):
+    """Make GET request to Lambda Cloud API."""
     if not LAMBDA_API_KEY:
         return type('MockResponse', (), {
             'ok': False,
@@ -46,6 +105,7 @@ def cloud_get(path: str):
     return requests.get(f"{LAMBDA_BASE_URL}{path}", headers=headers, timeout=30)
 
 def cloud_post(path: str, body: dict):
+    """Make POST request to Lambda Cloud API."""
     if not LAMBDA_API_KEY:
         return type('MockResponse', (), {
             'ok': False,
@@ -58,6 +118,7 @@ def cloud_post(path: str, body: dict):
         "Content-Type": "application/json"
     }
     return requests.post(f"{LAMBDA_BASE_URL}{path}", headers=headers, json=body, timeout=30)
+
 def extract_instance_id(launch_json):
     """
     Supports common launch response shapes:
@@ -83,17 +144,7 @@ def extract_instance_id(launch_json):
         return data.get("id")
 
     return None
-# ---------------- SSH helpers ----------------
-def wait_for_ssh(ip, port=22, timeout=300):
-    """Wait until instance SSH port is reachable."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            with socket.create_connection((ip, port), timeout=5):
-                return True
-        except OSError:
-            time.sleep(5)
-    return False
+
 def wait_for_instance_ip(instance_id: str, timeout: int = 600, interval: int = 5):
     """
     Poll GET /instances/{id} until BOTH conditions are met:
@@ -142,13 +193,20 @@ def wait_for_instance_ip(instance_id: str, timeout: int = 600, interval: int = 5
         f"Last seen status={last_status!r}, ip={last_ip!r}."
     )
 
+
+# ===============================
+# SSH CONNECTION HELPERS
+# ===============================
+
 def _ssh_key():
+    """Load SSH private key (try RSA first, then Ed25519)."""
     try:
         return paramiko.RSAKey.from_private_key_file(SSH_KEY_PATH)
     except Exception:
         return paramiko.Ed25519Key.from_private_key_file(SSH_KEY_PATH)
 
 def _mk_ssh(ip):
+    """Create SSH and SCP connections."""
     key = _ssh_key()
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -165,6 +223,22 @@ def _sh(ssh, cmd):
     code = stdout.channel.recv_exit_status()
     return code, out, err
 
+def wait_for_ssh(ip, port=22, timeout=300):
+    """Wait until instance SSH port is reachable."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((ip, port), timeout=5):
+                return True
+        except OSError:
+            time.sleep(5)
+    return False
+
+
+# ===============================
+# REMOTE INSTANCE SETUP
+# ===============================
+
 def create_remote_folder(ip, folder="/home/ubuntu/myjob"):
     """Connect to instance via SSH and create a folder."""
     key = _ssh_key()
@@ -176,43 +250,8 @@ def create_remote_folder(ip, folder="/home/ubuntu/myjob"):
     ssh.close()
     return folder
 
-@app.get("/health")
-def health():
-    api_key_status = "SET" if LAMBDA_API_KEY else "NOT SET"
-    api_key_preview = f"{LAMBDA_API_KEY[:8]}..." if LAMBDA_API_KEY else "None"
-
-    return jsonify({
-        "status": "ok",
-        "service": "lambda-min-api",
-        "api_key_status": api_key_status,
-        "api_key_preview": api_key_preview
-    })
-
-@app.get("/lambda/firewall-rulesets")
-def list_firewall_rulesets():
-    """
-    Returns all firewall rulesets from Lambda Cloud (IDs included).
-    Tip: filter on region to match your instance region (e.g., us-east-3).
-    """
-    r = cloud_get("/firewall-rulesets")
-    return (r.text, r.status_code, {"Content-Type": "application/json"})
-
-@app.get("/lambda/instance-types")
-def list_instance_types():
-
-    """Proxy: return Lambda Labs /instance-types response as-is."""
-    r = cloud_get("/instance-types")
-    return (r.text, r.status_code, {"Content-Type": "application/json"})
-# ---------- Provisioning helpers (new) ----------
-REMOTE_DIR = "/home/ubuntu/myjob"
-REMOTE_VENV = f"{REMOTE_DIR}/venv"
-REMOTE_SCRIPT_NAME = "detr_motion.py"      # remote filename
-REMOTE_REQ_NAME    = "requirements.txt"    # remote filename (we upload local 'remote-requirements.txt' as this)
-
-# Toggle running after setup
-RUN_AFTER_SETUP = False  # set True if you want to auto-execute the script after install
-
 def bootstrap_system_and_venv(ssh):
+    """Install system dependencies and create Python virtual environment."""
     # System deps
     _sh(ssh, "sudo apt-get update -y")
     _sh(ssh, "sudo apt-get install -y --no-install-recommends python3-venv python3-pip tesseract-ocr libtesseract-dev ffmpeg")
@@ -225,7 +264,7 @@ def upload_code_and_requirements_from_cwd(ssh, scp):
     """Upload ./detr_motion.py and ./remote-requirements.txt from current working dir."""
     cwd = os.getcwd()
     local_script = os.path.join(cwd, "detr_motion.py")
-    local_req    = os.path.join(cwd, "remote-requirements.txt")
+    local_req = os.path.join(cwd, "remote-requirements.txt")
 
     if not os.path.exists(local_script):
         raise FileNotFoundError(f"Expected file not found in current dir: {local_script}")
@@ -234,131 +273,25 @@ def upload_code_and_requirements_from_cwd(ssh, scp):
 
     _sh(ssh, f"mkdir -p {REMOTE_DIR}")
     scp.put(local_script, f"{REMOTE_DIR}/{REMOTE_SCRIPT_NAME}")
-    scp.put(local_req,    f"{REMOTE_DIR}/{REMOTE_REQ_NAME}")
+    scp.put(local_req, f"{REMOTE_DIR}/{REMOTE_REQ_NAME}")
 
 def pip_install_requirements(ssh):
+    """Install Python requirements in the virtual environment."""
     code, out, err = _sh(ssh, f"source {REMOTE_VENV}/bin/activate && cd {REMOTE_DIR} && pip install -r {REMOTE_REQ_NAME}")
     if code != 0:
         raise RuntimeError(f"pip install -r failed\nSTDOUT:\n{out}\nSTDERR:\n{err}")
 
 def run_script(ssh):
+    """Run the main script in the virtual environment."""
     code, out, err = _sh(ssh, f"cd {REMOTE_DIR} && source {REMOTE_VENV}/bin/activate && python {REMOTE_SCRIPT_NAME}")
     if code != 0:
         raise RuntimeError(f"Script failed\nSTDOUT:\n{out}\nSTDERR:\n{err}")
     return out
 
-# ---------------- Routes ----------------
-@app.post("/lambda/launch-instance")
-def launch_instance():
-    """Launch instance and create a folder inside it. (Existing API – unchanged)"""
-    body = {
-        "region_name": REGION_NAME,
-        "instance_type_name": INSTANCE_TYPE_NAME,
-        "ssh_key_names": SSH_KEY_NAMES,
-        "name": INSTANCE_NAME,
-        "firewall_rulesets": FIREWALL_RULESETS
-    }
-    body = {k: v for k, v in body.items() if v not in ("", [], {})}
 
-    r = cloud_post("/instance-operations/launch", body)
-    if not r.ok:
-        return (r.text, r.status_code, {"Content-Type": "application/json"})
-
-    data = r.json()
-    instance = data.get("instances", [{}])[0]
-    ip = instance.get("ip") or instance.get("ipv4")
-
-    if not ip:
-        return jsonify({"error": "No IP in launch response", "raw": data}), 500
-
-    # wait until SSH is ready
-    if not wait_for_ssh(ip):
-        return jsonify({"error": "SSH not ready", "ip": ip}), 504
-
-    # create folder
-    folder = create_remote_folder(ip, "/home/ubuntu/myjob")
-
-    return jsonify({
-        "status": "launched",
-        "ip": ip,
-        "folder_created": folder
-    })
-
-@app.post("/lambda/launch-and-setup")
-def launch_and_setup():
-    """
-    NEW: Launch → wait SSH → bootstrap (apt+venv) → upload ./detr_motion.py and ./remote-requirements.txt
-         → pip install -r requirements.txt → (optional) run script
-    """
-    # 1) Launch
-    body = {
-        "region_name": REGION_NAME,
-        "instance_type_name": INSTANCE_TYPE_NAME,
-        "ssh_key_names": SSH_KEY_NAMES,
-        "name": INSTANCE_NAME,
-        "firewall_rulesets": FIREWALL_RULESETS
-    }
-    body = {k: v for k, v in body.items() if v not in ("", [], {})}
-    r = cloud_post("/instance-operations/launch", body)
-    if not r.ok:
-        return (r.text, r.status_code, {"Content-Type": "application/json"})
-
-    
-    payload = r.json()
-    instance_id = extract_instance_id(payload)
-    if not instance_id:
-        return jsonify({"error": "No instance id in launch response", "raw": payload}), 500
-
-    # Poll until IP is assigned
-    try:
-        ip = wait_for_instance_ip(instance_id, timeout=600, interval=5)
-    except RuntimeError as e:
-        return jsonify({"error": str(e), "instance_id": instance_id, "raw": payload}), 504
-    # 2) Wait for SSH
-    if not wait_for_ssh(ip, timeout=600):
-        return jsonify({"error": "SSH not ready", "ip": ip}), 504
-
-    summary = {"status": "launched+provisioning", "ip": ip, "remote_dir": REMOTE_DIR, "steps": []}
-    try:
-        ssh, scp = _mk_ssh(ip)
-
-        # 3) Bootstrap
-        bootstrap_system_and_venv(ssh)
-        summary["steps"].append({"bootstrap": "ok"})
-
-        # 4) Upload code + requirements from current directory
-        upload_code_and_requirements_from_cwd(ssh, scp)
-        summary["steps"].append({"upload": {"script": "detr_motion.py", "requirements": "remote-requirements.txt → requirements.txt"}})
-
-        # 5) pip install -r
-        pip_install_requirements(ssh)
-        summary["steps"].append({"pip_install": "ok"})
-
-        # 6) Optional: run the script
-        if RUN_AFTER_SETUP:
-            out = run_script(ssh)
-            summary["steps"].append({"run": "ok", "stdout_tail": "\n".join(out.splitlines()[-20:])})
-
-        scp.close()
-        ssh.close()
-        summary["status"] = "launched+provisioned"
-        return jsonify(summary)
-
-    except Exception as e:
-        summary["status"] = "error"
-        summary["message"] = str(e)
-        return jsonify(summary), 500
-
-
-
-# Local input folder (same dir as this file)
-INPUT_VIDEO_DIR = os.path.join(os.getcwd(), "input-video")
-# Default remote filename for the uploaded video
-REMOTE_VIDEO_NAME = "input_video_4.mp4"  # change if your script expects another name
-# Optional hardcoded IP fallback (you can paste your IP here)
-HARDCODED_INSTANCE_IP = "192.222.59.217"  # e.g. "12.34.56.78"
-
-
+# ===============================
+# FILE MANAGEMENT HELPERS
+# ===============================
 
 def _pick_local_video(video_filename: str | None):
     """
@@ -383,102 +316,13 @@ def _pick_local_video(video_filename: str | None):
 
     raise FileNotFoundError(f"No .mp4 files found in {INPUT_VIDEO_DIR}")
 
-def upload_video_and_run(ip: str | None = None, video_filename: str | None = None):
-    """
-    Upload a video from ./input-video to the remote working folder and run detr_motion.py.
-    - ip: the instance IP to SSH into. If None, uses HARDCODED_INSTANCE_IP.
-    - video_filename: name inside ./input-video; if None, pick first .mp4 found.
-    Returns a summary dict (steps, stdout tail, etc.).
-    """
-    target_ip = ip or HARDCODED_INSTANCE_IP
-    if not target_ip:
-        raise ValueError("No IP provided. Pass ip in the request body or set HARDCODED_INSTANCE_IP.")
-
-    # 0) pick local video
-    local_path, chosen_name = _pick_local_video(video_filename)
-
-    # 1) wait for SSH (in case IP is new)
-    if not wait_for_ssh(target_ip, timeout=600):
-        raise RuntimeError(f"SSH not reachable on {target_ip}")
-
-    # 2) connect
-    ssh, scp = _mk_ssh(target_ip)
-
-    try:
-        # 3) ensure project dir exists
-        _sh(ssh, f"mkdir -p {REMOTE_DIR}")
-
-        # 4) upload video (rename remotely if your script expects a specific name)
-        remote_path = f"{REMOTE_DIR}/{REMOTE_VIDEO_NAME}"
-        scp.put(local_path, remote_path)
-
-        # 5) run inside venv
-        # If your script expects exactly REMOTE_VIDEO_NAME in cwd, you're good.
-        # If detr_motion.py needs args, adjust the command accordingly.
-        cmd = (
-    f"cd {REMOTE_DIR} && "
-    f"source {REMOTE_VENV}/bin/activate && "
-    f"pip install --no-cache-dir -r {REMOTE_REQ_NAME} && "
-    f"python {REMOTE_SCRIPT_NAME}"
-)
-
-        code, out, err = _sh(ssh, cmd)
-        if code != 0:
-            raise RuntimeError(f"Script failed (exit {code})\nSTDOUT:\n{out}\nSTDERR:\n{err}")
-
-        return {
-            "status": "ok",
-            "ip": target_ip,
-            "uploaded": {
-                "local": local_path,
-                "remote": remote_path
-            },
-            "stdout_tail": "\n".join(out.splitlines()[-50:])
-        }
-    finally:
-        try:
-            scp.close()
-        except Exception:
-            pass
-        try:
-            ssh.close()
-        except Exception:
-            pass
-
-
-@app.post("/lambda/upload-video-and-run")
-def api_upload_video_and_run():
-    """
-    Body (JSON) optional:
-      {
-        "ip": "1.2.3.4",            // if omitted, uses HARDCODED_INSTANCE_IP
-        "video": "input_video_4.mp4" // if omitted, picks first .mp4 in ./input-video
-      }
-    """
-    try:
-        body = request.get_json(silent=True) or {}
-        ip = body.get("ip") or None
-        video = body.get("video") or None
-
-        result = upload_video_and_run(ip=ip, video_filename=video)
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-
-
 def replace_remote_file(ip: str | None = None,
                         local_script: str | None = None,
                         remote_script: str | None = None):
-    """
-    Replace a file on the remote instance.
-    - ip: instance IP (if None, uses HARDCODED_INSTANCE_IP)
-    - local_script: local file in current working dir (default: detr_motion.py)
-    - remote_script: filename to place inside REMOTE_DIR (default: REMOTE_SCRIPT_NAME)
-    """
-    target_ip = ip or HARDCODED_INSTANCE_IP
+    """Replace a file on the remote instance."""
+    target_ip = ip or get_saved_ip()
     if not target_ip:
-        raise ValueError("No IP provided. Pass 'ip' or set HARDCODED_INSTANCE_IP.")
+        raise ValueError("No IP provided. Pass 'ip' or launch an instance first.")
 
     local_name = local_script or "detr_motion.py"
     local_path = os.path.join(os.getcwd(), local_name)
@@ -515,36 +359,11 @@ def replace_remote_file(ip: str | None = None,
         try: ssh.close()
         except Exception: pass
 
-@app.post("/lambda/replace-file")
-def api_replace_file():
-    """
-    Replace a file on the remote instance.
-
-    JSON body (all optional):
-    {
-      "ip": "1.2.3.4",              # if omitted, uses HARDCODED_INSTANCE_IP
-      "local_script": "detr_motion.py",  # local file in cwd (default: detr_motion.py)
-      "remote_script": "detr_motion.py"  # remote filename in REMOTE_DIR (default: REMOTE_SCRIPT_NAME)
-    }
-    """
-    try:
-        body = request.get_json(silent=True) or {}
-        res = replace_remote_file(
-            ip=body.get("ip"),
-            local_script=body.get("local_script"),
-            remote_script=body.get("remote_script"),
-        )
-        return jsonify(res)
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
 def pull_remote_file(ip: str | None, remote_filename: str) -> str:
-    """
-    SCP a file from REMOTE_DIR on the instance to local DOWNLOADS_DIR.
-    Returns the local file path.
-    """
-    target_ip = ip or HARDCODED_INSTANCE_IP
+    """SCP a file from REMOTE_DIR on the instance to local DOWNLOADS_DIR."""
+    target_ip = ip or get_saved_ip()
     if not target_ip:
-        raise ValueError("No IP provided. Pass 'ip' or set HARDCODED_INSTANCE_IP.")
+        raise ValueError("No IP provided. Pass 'ip' or launch an instance first.")
 
     if not wait_for_ssh(target_ip, timeout=600):
         raise RuntimeError(f"SSH not reachable on {target_ip}")
@@ -565,13 +384,255 @@ def pull_remote_file(ip: str | None, remote_filename: str) -> str:
         except Exception: pass
         try: ssh.close()
         except Exception: pass
+
+
+# ===============================
+# CORE WORKFLOW FUNCTIONS
+# ===============================
+
+def upload_video_and_run(ip: str | None = None, video_filename: str | None = None):
+    """
+    Upload a video from ./input-video to the remote working folder and run detr_motion.py.
+    - ip: the instance IP to SSH into. If None, uses saved IP from instance_info.txt.
+    - video_filename: name inside ./input-video; if None, pick first .mp4 found.
+    Returns a summary dict (steps, stdout tail, etc.).
+    """
+    target_ip = ip or get_saved_ip()
+    if not target_ip:
+        raise ValueError("No IP provided. Pass ip in the request body or launch an instance first.")
+
+    # 0) pick local video
+    local_path, chosen_name = _pick_local_video(video_filename)
+
+    # 1) wait for SSH (in case IP is new)
+    if not wait_for_ssh(target_ip, timeout=600):
+        raise RuntimeError(f"SSH not reachable on {target_ip}")
+
+    # 2) connect
+    ssh, scp = _mk_ssh(target_ip)
+
+    try:
+        # 3) ensure project dir exists
+        _sh(ssh, f"mkdir -p {REMOTE_DIR}")
+
+        # 4) upload video (rename remotely if your script expects a specific name)
+        remote_path = f"{REMOTE_DIR}/{REMOTE_VIDEO_NAME}"
+        scp.put(local_path, remote_path)
+
+        # 5) run inside venv
+        cmd = (
+            f"cd {REMOTE_DIR} && "
+            f"source {REMOTE_VENV}/bin/activate && "
+            f"pip install --no-cache-dir -r {REMOTE_REQ_NAME} && "
+            f"python {REMOTE_SCRIPT_NAME}"
+        )
+
+        code, out, err = _sh(ssh, cmd)
+        if code != 0:
+            raise RuntimeError(f"Script failed (exit {code})\nSTDOUT:\n{out}\nSTDERR:\n{err}")
+
+        return {
+            "status": "ok",
+            "ip": target_ip,
+            "uploaded": {
+                "local": local_path,
+                "remote": remote_path
+            },
+            "stdout_tail": "\n".join(out.splitlines()[-50:])
+        }
+    finally:
+        try:
+            scp.close()
+        except Exception:
+            pass
+        try:
+            ssh.close()
+        except Exception:
+            pass
+
+
+# ===============================
+# FLASK ROUTES - AUTHENTICATION
+# ===============================
+
+@app.post("/login")
+def auth_login():
+    """
+    POST JSON: {"username": "...", "password": "..."}
+    Compares against USERNAME/PASSWORD from environment.
+    Returns 200 on success, 401 on failure.
+    """
+    data = request.get_json(silent=True) or {}
+    username = data.get("username", "")
+    password = data.get("password", "")
+
+    if not username or not password:
+        return jsonify({"success": False, "error": "username and password required"}), 400
+
+    if username == ENV_USERNAME and password == ENV_PASSWORD:
+        return jsonify({"success": True, "message": "login ok"}), 200
+
+    return jsonify({"success": False, "error": "invalid credentials"}), 401
+
+
+# ===============================
+# FLASK ROUTES - HEALTH & INFO
+# ===============================
+
+@app.get("/health")
+def health():
+    """Health check endpoint."""
+    api_key_status = "SET" if LAMBDA_API_KEY else "NOT SET"
+    api_key_preview = f"{LAMBDA_API_KEY[:8]}..." if LAMBDA_API_KEY else "None"
+
+    return jsonify({
+        "status": "ok",
+        "service": "lambda-min-api",
+        "api_key_status": api_key_status,
+        "api_key_preview": api_key_preview
+    })
+
+@app.get("/lambda/firewall-rulesets")
+def list_firewall_rulesets():
+    """
+    Returns all firewall rulesets from Lambda Cloud (IDs included).
+    Tip: filter on region to match your instance region (e.g., us-east-3).
+    """
+    r = cloud_get("/firewall-rulesets")
+    return (r.text, r.status_code, {"Content-Type": "application/json"})
+
+@app.get("/lambda/instance-types")
+def list_instance_types():
+    """Proxy: return Lambda Labs /instance-types response as-is."""
+    r = cloud_get("/instance-types")
+    return (r.text, r.status_code, {"Content-Type": "application/json"})
+
+
+# ===============================
+# FLASK ROUTES - INSTANCE MANAGEMENT
+# ===============================
+
+@app.post("/lambda/launch-and-setup")
+def launch_and_setup():
+    """
+    Launch → wait SSH → bootstrap (apt+venv) → upload ./detr_motion.py and ./remote-requirements.txt
+    → pip install -r requirements.txt → (optional) run script
+    """
+    # 1) Launch
+    body = {
+        "region_name": REGION_NAME,
+        "instance_type_name": INSTANCE_TYPE_NAME,
+        "ssh_key_names": SSH_KEY_NAMES,
+        "name": INSTANCE_NAME,
+        "firewall_rulesets": FIREWALL_RULESETS
+    }
+    body = {k: v for k, v in body.items() if v not in ("", [], {})}
+    r = cloud_post("/instance-operations/launch", body)
+    if not r.ok:
+        return (r.text, r.status_code, {"Content-Type": "application/json"})
+
+    payload = r.json()
+    instance_id = extract_instance_id(payload)
+    if not instance_id:
+        return jsonify({"error": "No instance id in launch response", "raw": payload}), 500
+
+    # Poll until IP is assigned
+    try:
+        ip = wait_for_instance_ip(instance_id, timeout=600, interval=5)
+        # Save instance info to file
+        save_instance_info(instance_id, ip)
+    except RuntimeError as e:
+        return jsonify({"error": str(e), "instance_id": instance_id, "raw": payload}), 504
+
+    # 2) Wait for SSH
+    if not wait_for_ssh(ip, timeout=600):
+        return jsonify({"error": "SSH not ready", "ip": ip}), 504
+
+    summary = {"status": "launched+provisioning", "ip": ip, "remote_dir": REMOTE_DIR, "steps": []}
+    try:
+        ssh, scp = _mk_ssh(ip)
+
+        # 3) Bootstrap
+        bootstrap_system_and_venv(ssh)
+        summary["steps"].append({"bootstrap": "ok"})
+
+        # 4) Upload code + requirements from current directory
+        upload_code_and_requirements_from_cwd(ssh, scp)
+        summary["steps"].append({"upload": {"script": "detr_motion.py", "requirements": "remote-requirements.txt → requirements.txt"}})
+
+        # 5) pip install -r
+        pip_install_requirements(ssh)
+        summary["steps"].append({"pip_install": "ok"})
+
+        # 6) Optional: run the script
+        if RUN_AFTER_SETUP:
+            out = run_script(ssh)
+            summary["steps"].append({"run": "ok", "stdout_tail": "\n".join(out.splitlines()[-20:])})
+
+        scp.close()
+        ssh.close()
+        summary["status"] = "launched+provisioned"
+        return jsonify(summary)
+
+    except Exception as e:
+        summary["status"] = "error"
+        summary["message"] = str(e)
+        return jsonify(summary), 500
+
+
+# ===============================
+# FLASK ROUTES - FILE OPERATIONS
+# ===============================
+
+@app.post("/lambda/upload-video-and-run")
+def api_upload_video_and_run():
+    """
+    Body (JSON) optional:
+      {
+        "ip": "1.2.3.4",            // if omitted, uses saved IP from instance_info.txt
+        "video": "input_video_4.mp4" // if omitted, picks first .mp4 in ./input-video
+      }
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        ip = body.get("ip") or None
+        video = body.get("video") or None
+
+        result = upload_video_and_run(ip=ip, video_filename=video)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.post("/lambda/replace-file")
+def api_replace_file():
+    """
+    Replace a file on the remote instance.
+
+    JSON body (all optional):
+    {
+      "ip": "1.2.3.4",              # if omitted, uses saved IP from instance_info.txt
+      "local_script": "detr_motion.py",  # local file in cwd (default: detr_motion.py)
+      "remote_script": "detr_motion.py"  # remote filename in REMOTE_DIR (default: REMOTE_SCRIPT_NAME)
+    }
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        res = replace_remote_file(
+            ip=body.get("ip"),
+            local_script=body.get("local_script"),
+            remote_script=body.get("remote_script"),
+        )
+        return jsonify(res)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.get("/lambda/download-output")
 def api_download_output():
     """
     Download an output file from the instance.
 
     Query params (optional):
-      ip   = instance IP (uses HARDCODED_INSTANCE_IP if omitted)
+      ip   = instance IP (uses saved IP from instance_info.txt if omitted)
       name = remote filename in REMOTE_DIR (default: output_detr_motion_filtered.mp4)
 
     Example:
@@ -592,6 +653,48 @@ def api_download_output():
         return jsonify({"status": "error", "message": str(e)}), 404
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.post("/upload-video")
+def upload_video():
+    """
+    Upload a video file to the input-video directory.
+    Expects a multipart/form-data request with 'video' file field.
+    """
+    try:
+        if 'video' not in request.files:
+            return jsonify({"status": "error", "message": "No video file provided"}), 400
+        
+        file = request.files['video']
+        if file.filename == '':
+            return jsonify({"status": "error", "message": "No file selected"}), 400
+        
+        # Validate file type
+        allowed_extensions = {'.mp4', '.mov', '.avi'}
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in allowed_extensions:
+            return jsonify({"status": "error", "message": "Invalid file type. Only MP4, MOV, AVI allowed"}), 400
+        
+        # Ensure input-video directory exists
+        os.makedirs(INPUT_VIDEO_DIR, exist_ok=True)
+        
+        # Save file to input-video directory
+        filepath = os.path.join(INPUT_VIDEO_DIR, file.filename)
+        file.save(filepath)
+        
+        return jsonify({
+            "status": "ok",
+            "message": "Video uploaded successfully",
+            "filename": file.filename,
+            "path": filepath
+        })
+        
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ===============================
+# MAIN
+# ===============================
 
 if __name__ == "__main__":
     print(f"LAMBDA_API_KEY status: {'SET' if LAMBDA_API_KEY else 'NOT SET'}")
