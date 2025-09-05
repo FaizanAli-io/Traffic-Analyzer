@@ -62,3 +62,6 @@ Thumbs.db
 instance/
 *.sqlite3
 db.sqlite3
+
+/downloads/
+/input-video/
