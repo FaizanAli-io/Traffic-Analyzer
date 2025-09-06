@@ -1,4 +1,3 @@
-// Dashboard.jsx
 import React, { useState } from "react";
 import "./Dashboard.css";
 
@@ -69,9 +68,7 @@ export default function Dashboard() {
         throw new Error(data.message || `Termination failed (HTTP ${resp.status})`);
       }
       setTerminateMsg("GPU instance terminated successfully ✅");
-      // Clear IP since instance is terminated
       setIp("");
-      // Clear other states since instance is gone
       setLaunchMsg("");
       setProcessMsg("");
       setUploadMsg("");
@@ -88,7 +85,7 @@ export default function Dashboard() {
     setUploadErr("");
     setUploadMsg("");
     setFile(null);
-    setUploadedFilename(""); // reset when choosing a new file
+    setUploadedFilename("");
     if (!f) return;
     const name = f.name.toLowerCase();
     const ok = name.endsWith(".mp4") || name.endsWith(".mov") || name.endsWith(".avi");
@@ -112,7 +109,6 @@ export default function Dashboard() {
       if (!resp.ok || data.status !== "ok") {
         throw new Error(data.message || `Upload failed (HTTP ${resp.status})`);
       }
-      // backend always saves as a fixed name; keep it for processing
       setUploadedFilename(data.filename || "input_video_4.mp4");
       setUploadMsg(`Uploaded successfully as: ${data.filename || "input_video_4.mp4"} ✅`);
     } catch (e) {
@@ -129,7 +125,6 @@ export default function Dashboard() {
     setProcessMsg("Processing video on GPU… this can take several minutes. Please don't refresh or close this tab.");
     try {
       const body = {
-        // pass what you have; backend will use saved defaults if omitted
         ip: ip || undefined,
         video: uploadedFilename || undefined,
       };
@@ -171,7 +166,7 @@ export default function Dashboard() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "outputs_bundle.zip"; // ZIP containing video + CSV
+      a.download = "outputs_bundle.zip";
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -184,104 +179,207 @@ export default function Dashboard() {
   };
 
   return (
-    <div style={{ maxWidth: 640, margin: "40px auto", textAlign: "center" }}>
-      <h1>GPU Control</h1>
-
-      {/* Start GPU */}
-      <div style={{ display: "flex", gap: "12px", justifyContent: "center", marginBottom: "16px" }}>
-        <button
-          onClick={startGpu}
-          disabled={isLaunching}
-          style={{ 
-            padding: "12px 20px", 
-            fontSize: 16, 
-            borderRadius: 10,
-            backgroundColor: "#007bff",
-            color: "white",
-            border: "none",
-            cursor: isLaunching ? "not-allowed" : "pointer"
-          }}
-        >
-          {isLaunching ? "Launching…" : "Start GPU"}
-        </button>
-        
-        <button
-          onClick={terminateInstance}
-          disabled={isTerminating}
-          style={{ 
-            padding: "12px 20px", 
-            fontSize: 16, 
-            borderRadius: 10,
-            backgroundColor: "#dc3545",
-            color: "white",
-            border: "none",
-            cursor: isTerminating ? "not-allowed" : "pointer"
-          }}
-        >
-          {isTerminating ? "Terminating…" : "Terminate Instance"}
-        </button>
+    <div className="dashboard-main-container">
+      <div className="dashboard-header">
+        <h1 className="dashboard-title">
+          <span className="dashboard-icon">⚡</span>
+          GPU Processing Center
+        </h1>
+        <p className="dashboard-subtitle">Manage your GPU instances and process videos with ease</p>
       </div>
 
-      {launchMsg && <p style={{ marginTop: 12, color: "#28a745" }}>{launchMsg}</p>}
-      {ip && <p style={{ marginTop: 6, fontFamily: "monospace", backgroundColor: "#f8f9fa", padding: "8px", borderRadius: "4px" }}>IP: {ip}</p>}
-      {launchErr && <p style={{ marginTop: 12, color: "#dc3545" }}>{launchErr}</p>}
-      
-      {terminateMsg && <p style={{ marginTop: 12, color: "#28a745" }}>{terminateMsg}</p>}
-      {terminateErr && <p style={{ marginTop: 12, color: "#dc3545" }}>{terminateErr}</p>}
+      <div className="dashboard-grid">
+        {/* GPU Control Section */}
+        <div className="dashboard-card">
+          <h2 className="dashboard-card-title">
+            <span className="dashboard-card-icon">🖥️</span>
+            GPU Instance Control
+          </h2>
+          
+          <div className="dashboard-button-group">
+            <button
+              onClick={startGpu}
+              disabled={isLaunching}
+              className={`dashboard-btn dashboard-btn-primary ${isLaunching ? 'dashboard-loading' : ''}`}
+            >
+              {isLaunching && <div className="dashboard-spinner"></div>}
+              {isLaunching ? "Launching…" : "Start GPU"}
+            </button>
+            
+            <button
+              onClick={terminateInstance}
+              disabled={isTerminating}
+              className={`dashboard-btn dashboard-btn-danger ${isTerminating ? 'dashboard-loading' : ''}`}
+            >
+              {isTerminating && <div className="dashboard-spinner"></div>}
+              {isTerminating ? "Terminating…" : "Terminate Instance"}
+            </button>
+          </div>
 
-      {/* Upload */}
-      <hr style={{ margin: "28px 0" }} />
-      <h2>Upload Video</h2>
-      <input
-        type="file"
-        accept=".mp4,.mov,.avi,video/mp4,video/quicktime,video/x-msvideo"
-        onChange={onChooseFile}
-      />
-      {file && (
-        <p style={{ marginTop: 8 }}>
-          Selected: <strong>{file.name}</strong> ({(file.size / 1024 / 1024).toFixed(2)} MB)
-        </p>
-      )}
-      <div style={{ marginTop: 10 }}>
-        <button
-          onClick={uploadVideo}
-          disabled={!file || isUploading}
-          style={{ padding: "10px 16px", borderRadius: 8 }}
-        >
-          {isUploading ? "Uploading…" : "Upload Video"}
-        </button>
+          <div className="dashboard-status-area">
+            {launchMsg && (
+              <div className="dashboard-status dashboard-success">
+                <span className="dashboard-status-icon">✅</span>
+                {launchMsg}
+              </div>
+            )}
+            {ip && (
+              <div className="dashboard-ip-display">
+                <span className="dashboard-ip-label">Instance IP:</span>
+                <code className="dashboard-ip-code">{ip}</code>
+              </div>
+            )}
+            {launchErr && (
+              <div className="dashboard-status dashboard-error">
+                <span className="dashboard-status-icon">❌</span>
+                {launchErr}
+              </div>
+            )}
+            {terminateMsg && (
+              <div className="dashboard-status dashboard-success">
+                <span className="dashboard-status-icon">✅</span>
+                {terminateMsg}
+              </div>
+            )}
+            {terminateErr && (
+              <div className="dashboard-status dashboard-error">
+                <span className="dashboard-status-icon">❌</span>
+                {terminateErr}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Upload Section */}
+        <div className="dashboard-card">
+          <h2 className="dashboard-card-title">
+            <span className="dashboard-card-icon">📤</span>
+            Video Upload
+          </h2>
+          
+          <div className="dashboard-upload-area">
+            <label className="dashboard-file-input-wrapper">
+              <input
+                type="file"
+                accept=".mp4,.mov,.avi,video/mp4,video/quicktime,video/x-msvideo"
+                onChange={onChooseFile}
+                className="dashboard-file-input"
+              />
+              <div className="dashboard-file-input-display">
+                <span className="dashboard-upload-icon">📁</span>
+                <span>Click to select video file</span>
+                <small>MP4, MOV, AVI supported</small>
+              </div>
+            </label>
+
+            {file && (
+              <div className="dashboard-file-preview">
+                <div className="dashboard-file-info">
+                  <span className="dashboard-file-name">{file.name}</span>
+                  <span className="dashboard-file-size">
+                    {(file.size / 1024 / 1024).toFixed(2)} MB
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <button
+              onClick={uploadVideo}
+              disabled={!file || isUploading}
+              className={`dashboard-btn dashboard-btn-secondary ${(!file || isUploading) ? 'dashboard-disabled' : ''} ${isUploading ? 'dashboard-loading' : ''}`}
+            >
+              {isUploading && <div className="dashboard-spinner"></div>}
+              {isUploading ? "Uploading…" : "Upload Video"}
+            </button>
+          </div>
+
+          <div className="dashboard-status-area">
+            {uploadMsg && (
+              <div className="dashboard-status dashboard-success">
+                <span className="dashboard-status-icon">✅</span>
+                {uploadMsg}
+              </div>
+            )}
+            {uploadErr && (
+              <div className="dashboard-status dashboard-error">
+                <span className="dashboard-status-icon">❌</span>
+                {uploadErr}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Process Section */}
+        <div className="dashboard-card">
+          <h2 className="dashboard-card-title">
+            <span className="dashboard-card-icon">⚙️</span>
+            Video Processing
+          </h2>
+          
+          <div className="dashboard-process-area">
+            <p className="dashboard-process-description">
+              Process your uploaded video using GPU acceleration. This operation may take several minutes.
+            </p>
+            
+            <button
+              onClick={processVideo}
+              disabled={isProcessing || !uploadedFilename}
+              title={!uploadedFilename ? "Upload a video first" : ""}
+              className={`dashboard-btn dashboard-btn-accent ${(isProcessing || !uploadedFilename) ? 'dashboard-disabled' : ''} ${isProcessing ? 'dashboard-loading' : ''}`}
+            >
+              {isProcessing && <div className="dashboard-spinner"></div>}
+              {isProcessing ? "Processing…" : "Process Video"}
+            </button>
+          </div>
+
+          <div className="dashboard-status-area">
+            {processMsg && (
+              <div className="dashboard-status dashboard-success">
+                <span className="dashboard-status-icon">✅</span>
+                {processMsg}
+              </div>
+            )}
+            {processErr && (
+              <div className="dashboard-status dashboard-error">
+                <span className="dashboard-status-icon">❌</span>
+                {processErr}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Download Section */}
+        <div className="dashboard-card">
+          <h2 className="dashboard-card-title">
+            <span className="dashboard-card-icon">📥</span>
+            Download Results
+          </h2>
+          
+          <div className="dashboard-download-area">
+            <p className="dashboard-download-description">
+              Download a ZIP file containing both the processed video and CSV data with analysis results.
+            </p>
+            
+            <button
+              onClick={downloadFiles}
+              disabled={isDownloading}
+              className={`dashboard-btn dashboard-btn-success ${isDownloading ? 'dashboard-loading' : ''}`}
+            >
+              {isDownloading && <div className="dashboard-spinner"></div>}
+              {isDownloading ? "Downloading…" : "Download ZIP (Video + CSV)"}
+            </button>
+          </div>
+
+          <div className="dashboard-status-area">
+            {downloadErr && (
+              <div className="dashboard-status dashboard-error">
+                <span className="dashboard-status-icon">❌</span>
+                {downloadErr}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
-      {uploadMsg && <p style={{ marginTop: 10, color: "#28a745" }}>{uploadMsg}</p>}
-      {uploadErr && <p style={{ marginTop: 10, color: "#dc3545" }}>{uploadErr}</p>}
-
-      {/* Process */}
-      <hr style={{ margin: "28px 0" }} />
-      <h2>Process Video</h2>
-      <button
-        onClick={processVideo}
-        disabled={isProcessing || !uploadedFilename}
-        title={!uploadedFilename ? "Upload a video first" : ""}
-        style={{ padding: "10px 16px", borderRadius: 8 }}
-      >
-        {isProcessing ? "Processing…" : "Process Video"}
-      </button>
-      {processMsg && <p style={{ marginTop: 10, color: "#28a745" }}>{processMsg}</p>}
-      {processErr && <p style={{ marginTop: 10, color: "#dc3545" }}>{processErr}</p>}
-
-      {/* Download */}
-      <hr style={{ margin: "28px 0" }} />
-      <h2>Download Results</h2>
-      <p style={{ fontSize: 14, color: "#666", marginBottom: 16 }}>
-        Downloads a ZIP file containing both the processed video and CSV data
-      </p>
-      <button
-        onClick={downloadFiles}
-        disabled={isDownloading}
-        style={{ padding: "10px 16px", borderRadius: 8 }}
-      >
-        {isDownloading ? "Downloading…" : "Download ZIP (Video + CSV)"}
-      </button>
-      {downloadErr && <p style={{ marginTop: 10, color: "#dc3545" }}>{downloadErr}</p>}
     </div>
   );
 }
