@@ -11,6 +11,11 @@ export default function Dashboard() {
   const [launchErr, setLaunchErr] = useState("");
   const [ip, setIp] = useState("");
 
+  // Terminate Instance
+  const [isTerminating, setIsTerminating] = useState(false);
+  const [terminateMsg, setTerminateMsg] = useState("");
+  const [terminateErr, setTerminateErr] = useState("");
+
   // Upload
   const [file, setFile] = useState(null);
   const [uploadedFilename, setUploadedFilename] = useState(""); // backend fixed name to use later
@@ -47,6 +52,34 @@ export default function Dashboard() {
       setLaunchMsg("");
     } finally {
       setIsLaunching(false);
+    }
+  };
+
+  const terminateInstance = async () => {
+    setIsTerminating(true);
+    setTerminateErr("");
+    setTerminateMsg("Terminating GPU instance… please wait.");
+    try {
+      const resp = await fetch(`${API_BASE}/lambda/terminate-instance`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.status !== "ok") {
+        throw new Error(data.message || `Termination failed (HTTP ${resp.status})`);
+      }
+      setTerminateMsg("GPU instance terminated successfully ✅");
+      // Clear IP since instance is terminated
+      setIp("");
+      // Clear other states since instance is gone
+      setLaunchMsg("");
+      setProcessMsg("");
+      setUploadMsg("");
+    } catch (e) {
+      setTerminateErr(e.message || "Instance termination failed.");
+      setTerminateMsg("");
+    } finally {
+      setIsTerminating(false);
     }
   };
 
@@ -155,16 +188,46 @@ export default function Dashboard() {
       <h1>GPU Control</h1>
 
       {/* Start GPU */}
-      <button
-        onClick={startGpu}
-        disabled={isLaunching}
-        style={{ padding: "12px 20px", fontSize: 16, borderRadius: 10 }}
-      >
-        {isLaunching ? "Launching…" : "Start GPU"}
-      </button>
-      {launchMsg && <p style={{ marginTop: 12 }}>{launchMsg}</p>}
-      {ip && <p style={{ marginTop: 6, fontFamily: "monospace" }}>IP: {ip}</p>}
-      {launchErr && <p style={{ marginTop: 12, color: "#c00" }}>{launchErr}</p>}
+      <div style={{ display: "flex", gap: "12px", justifyContent: "center", marginBottom: "16px" }}>
+        <button
+          onClick={startGpu}
+          disabled={isLaunching}
+          style={{ 
+            padding: "12px 20px", 
+            fontSize: 16, 
+            borderRadius: 10,
+            backgroundColor: "#007bff",
+            color: "white",
+            border: "none",
+            cursor: isLaunching ? "not-allowed" : "pointer"
+          }}
+        >
+          {isLaunching ? "Launching…" : "Start GPU"}
+        </button>
+        
+        <button
+          onClick={terminateInstance}
+          disabled={isTerminating}
+          style={{ 
+            padding: "12px 20px", 
+            fontSize: 16, 
+            borderRadius: 10,
+            backgroundColor: "#dc3545",
+            color: "white",
+            border: "none",
+            cursor: isTerminating ? "not-allowed" : "pointer"
+          }}
+        >
+          {isTerminating ? "Terminating…" : "Terminate Instance"}
+        </button>
+      </div>
+
+      {launchMsg && <p style={{ marginTop: 12, color: "#28a745" }}>{launchMsg}</p>}
+      {ip && <p style={{ marginTop: 6, fontFamily: "monospace", backgroundColor: "#f8f9fa", padding: "8px", borderRadius: "4px" }}>IP: {ip}</p>}
+      {launchErr && <p style={{ marginTop: 12, color: "#dc3545" }}>{launchErr}</p>}
+      
+      {terminateMsg && <p style={{ marginTop: 12, color: "#28a745" }}>{terminateMsg}</p>}
+      {terminateErr && <p style={{ marginTop: 12, color: "#dc3545" }}>{terminateErr}</p>}
 
       {/* Upload */}
       <hr style={{ margin: "28px 0" }} />
@@ -188,8 +251,8 @@ export default function Dashboard() {
           {isUploading ? "Uploading…" : "Upload Video"}
         </button>
       </div>
-      {uploadMsg && <p style={{ marginTop: 10 }}>{uploadMsg}</p>}
-      {uploadErr && <p style={{ marginTop: 10, color: "#c00" }}>{uploadErr}</p>}
+      {uploadMsg && <p style={{ marginTop: 10, color: "#28a745" }}>{uploadMsg}</p>}
+      {uploadErr && <p style={{ marginTop: 10, color: "#dc3545" }}>{uploadErr}</p>}
 
       {/* Process */}
       <hr style={{ margin: "28px 0" }} />
@@ -202,8 +265,8 @@ export default function Dashboard() {
       >
         {isProcessing ? "Processing…" : "Process Video"}
       </button>
-      {processMsg && <p style={{ marginTop: 10 }}>{processMsg}</p>}
-      {processErr && <p style={{ marginTop: 10, color: "#c00" }}>{processErr}</p>}
+      {processMsg && <p style={{ marginTop: 10, color: "#28a745" }}>{processMsg}</p>}
+      {processErr && <p style={{ marginTop: 10, color: "#dc3545" }}>{processErr}</p>}
 
       {/* Download */}
       <hr style={{ margin: "28px 0" }} />
@@ -218,7 +281,7 @@ export default function Dashboard() {
       >
         {isDownloading ? "Downloading…" : "Download ZIP (Video + CSV)"}
       </button>
-      {downloadErr && <p style={{ marginTop: 10, color: "#c00" }}>{downloadErr}</p>}
+      {downloadErr && <p style={{ marginTop: 10, color: "#dc3545" }}>{downloadErr}</p>}
     </div>
   );
 }

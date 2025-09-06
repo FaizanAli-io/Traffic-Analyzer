@@ -782,6 +782,72 @@ def upload_video():
 
 
 
+
+
+
+
+# ===============================
+# INSTANCE TERMINATION
+# ===============================
+
+def terminate_saved_instance():
+    """
+    Terminate the instance using ID from instance_info.txt.
+    Returns the termination response or raises an error.
+    """
+    instance_id, ip = load_instance_info()
+    if not instance_id:
+        raise ValueError("No saved instance found. Check instance_info.txt file.")
+    
+    # Call Lambda Cloud API to terminate
+    body = {"instance_ids": [instance_id]}
+    r = cloud_post("/instance-operations/terminate", body)
+    
+    if not r.ok:
+        raise RuntimeError(f"Failed to terminate instance {instance_id}: {r.text}")
+    
+    return r.json(), instance_id, ip
+
+# ===============================
+# FLASK ROUTE - INSTANCE TERMINATION
+# ===============================
+
+@app.post("/lambda/terminate-instance")
+def api_terminate_instance():
+    """
+    Terminate the saved instance using ID from instance_info.txt.
+    Cleans up the instance_info.txt file after successful termination.
+    
+    Returns:
+      - 200: Instance terminated successfully
+      - 404: No saved instance found
+      - 500: Termination failed
+    """
+    try:
+        response_data, instance_id, ip = terminate_saved_instance()
+        
+        # Clean up instance_info.txt after successful termination
+        try:
+            if os.path.exists(INSTANCE_INFO_FILE):
+                os.remove(INSTANCE_INFO_FILE)
+                print(f"Cleaned up instance info file: {INSTANCE_INFO_FILE}")
+        except Exception as e:
+            print(f"Warning: Could not remove instance info file: {e}")
+        
+        return jsonify({
+            "status": "ok",
+            "message": "Instance terminated successfully",
+            "instance_id": instance_id,
+            "ip": ip,
+            "lambda_response": response_data
+        })
+        
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 404
+    except RuntimeError as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Unexpected error: {str(e)}"}), 500
 # ===============================
 # MAIN
 # ===============================
