@@ -8,6 +8,7 @@ from flask import Flask, jsonify, request, send_file
 from dotenv import load_dotenv
 from flask_cors import CORS
 
+import tempfile, zipfile, os
 # Load environment variables from .env file
 load_dotenv()
 
@@ -18,7 +19,7 @@ LAMBDA_BASE_URL = "https://cloud.lambdalabs.com/api/v1"
 INSTANCE_TYPE_NAME = "gpu_1x_gh200"
 REGION_NAME = "us-east-3"
 SSH_KEY_NAMES = ["Desktop-Pc"]
-INSTANCE_NAME = "traffic-analysis-1"
+INSTANCE_NAME = "traffic-analysis"
 FIREWALL_RULESETS = [{"id": "7093760c5d4e4df2bf8584ae791526c4"}]
 
 # SSH config (update with your key and username)
@@ -47,6 +48,9 @@ REMOTE_VIDEO_NAME = "input_video_4.mp4"
 
 # Toggle running after setup
 RUN_AFTER_SETUP = False
+
+
+FIXED_VIDEO_BASENAME = "input_video_4.mp4" 
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -390,12 +394,44 @@ def pull_remote_file(ip: str | None, remote_filename: str) -> str:
 # CORE WORKFLOW FUNCTIONS
 # ===============================
 
+
+def cleanup_remote_files(ssh):
+    """
+    Delete all previous MP4 and CSV files from the remote directory.
+    This is called before uploading new video to ensure clean state.
+    """
+    try:
+        # Delete all MP4 files
+        code, out, err = _sh(ssh, f"find {REMOTE_DIR} -name '*.mp4' -type f -delete")
+        if code == 0:
+            mp4_count = out.strip().count('\n') if out.strip() else 0
+            print(f"Cleaned up MP4 files from remote directory")
+        else:
+            print(f"Warning: Could not clean MP4 files: {err}")
+
+        # Delete all CSV files
+        code, out, err = _sh(ssh, f"find {REMOTE_DIR} -name '*.csv' -type f -delete")
+        if code == 0:
+            csv_count = out.strip().count('\n') if out.strip() else 0
+            print(f"Cleaned up CSV files from remote directory")
+        else:
+            print(f"Warning: Could not clean CSV files: {err}")
+
+        # Also clean up any log files from previous runs
+        code, out, err = _sh(ssh, f"find {REMOTE_DIR} -name '*.log' -type f -delete")
+        if code == 0:
+            print(f"Cleaned up log files from remote directory")
+
+        return True
+    except Exception as e:
+        print(f"Warning: Error during cleanup: {e}")
+        return False
+
 def upload_video_and_run(ip: str | None = None, video_filename: str | None = None):
     """
     Upload a video from ./input-video to the remote working folder and run detr_motion.py.
-    - ip: the instance IP to SSH into. If None, uses saved IP from instance_info.txt.
-    - video_filename: name inside ./input-video; if None, pick first .mp4 found.
-    Returns a summary dict (steps, stdout tail, etc.).
+    Now includes cleanup of all previous MP4 and CSV files before uploading new content.
+    Saves logs to detr_motion.log inside the remote working folder.
     """
     target_ip = ip or get_saved_ip()
     if not target_ip:
@@ -415,31 +451,50 @@ def upload_video_and_run(ip: str | None = None, video_filename: str | None = Non
         # 3) ensure project dir exists
         _sh(ssh, f"mkdir -p {REMOTE_DIR}")
 
-        # 4) upload video (rename remotely if your script expects a specific name)
+        # 4) CLEAN UP PREVIOUS FILES - This is the new addition
+        print("Cleaning up previous MP4 and CSV files from remote directory...")
+        cleanup_success = cleanup_remote_files(ssh)
+
+        # 5) upload video (rename remotely if your script expects a specific name)
         remote_path = f"{REMOTE_DIR}/{REMOTE_VIDEO_NAME}"
         scp.put(local_path, remote_path)
 
-        # 5) run inside venv
+        # 6) run inside venv and save logs
+        remote_log = f"{REMOTE_DIR}/detr_motion.log"
         cmd = (
             f"cd {REMOTE_DIR} && "
             f"source {REMOTE_VENV}/bin/activate && "
             f"pip install --no-cache-dir -r {REMOTE_REQ_NAME} && "
-            f"python {REMOTE_SCRIPT_NAME}"
+            f"python {REMOTE_SCRIPT_NAME} "
+            f"> {remote_log} 2>&1"   # redirect both stdout and stderr to file
         )
 
         code, out, err = _sh(ssh, cmd)
+
+        # Pull log content back (optional: just the tail for response)
+        try:
+            tail_cmd = f"tail -n 50 {remote_log}"
+            _, tail_out, _ = _sh(ssh, tail_cmd)
+        except Exception:
+            tail_out = "Could not read log file"
+
         if code != 0:
-            raise RuntimeError(f"Script failed (exit {code})\nSTDOUT:\n{out}\nSTDERR:\n{err}")
+            raise RuntimeError(
+                f"Script failed (exit {code})\n"
+                f"Check logs at {remote_log}\n"
+                f"Last output:\n{tail_out}"
+            )
 
         return {
             "status": "ok",
             "ip": target_ip,
-            "uploaded": {
-                "local": local_path,
-                "remote": remote_path
-            },
-            "stdout_tail": "\n".join(out.splitlines()[-50:])
+            "uploaded": {"local": local_path, "remote": remote_path},
+            "log_file": remote_log,
+            "stdout_tail": tail_out,
+            "cleanup_performed": cleanup_success,
+            "message": "Previous files cleaned up and new video processed successfully"
         }
+
     finally:
         try:
             scp.close()
@@ -449,6 +504,7 @@ def upload_video_and_run(ip: str | None = None, video_filename: str | None = Non
             ssh.close()
         except Exception:
             pass
+
 
 
 # ===============================
@@ -515,10 +571,10 @@ def list_instance_types():
 @app.post("/lambda/launch-and-setup")
 def launch_and_setup():
     """
-    Launch → wait SSH → bootstrap (apt+venv) → upload ./detr_motion.py and ./remote-requirements.txt
-    → pip install -r requirements.txt → (optional) run script
+    Launch → wait IP → wait SSH → bootstrap/upload/install.
+    Returns a simple, final message only when everything is ready.
     """
-    # 1) Launch
+    # 1) Launch instance
     body = {
         "region_name": REGION_NAME,
         "instance_type_name": INSTANCE_TYPE_NAME,
@@ -526,7 +582,7 @@ def launch_and_setup():
         "name": INSTANCE_NAME,
         "firewall_rulesets": FIREWALL_RULESETS
     }
-    body = {k: v for k, v in body.items() if v not in ("", [], {})}
+    body = {k: v for k, v in body.items() if v not in ("", [], {}, None)}
     r = cloud_post("/instance-operations/launch", body)
     if not r.ok:
         return (r.text, r.status_code, {"Content-Type": "application/json"})
@@ -534,50 +590,41 @@ def launch_and_setup():
     payload = r.json()
     instance_id = extract_instance_id(payload)
     if not instance_id:
-        return jsonify({"error": "No instance id in launch response", "raw": payload}), 500
+        return jsonify({"status": "error", "message": "No instance id in launch response"}), 500
 
-    # Poll until IP is assigned
+    # 2) Get public IP
     try:
         ip = wait_for_instance_ip(instance_id, timeout=600, interval=5)
-        # Save instance info to file
         save_instance_info(instance_id, ip)
     except RuntimeError as e:
-        return jsonify({"error": str(e), "instance_id": instance_id, "raw": payload}), 504
+        return jsonify({"status": "error", "message": str(e)}), 504
 
-    # 2) Wait for SSH
+    # 3) Wait for SSH
     if not wait_for_ssh(ip, timeout=600):
-        return jsonify({"error": "SSH not ready", "ip": ip}), 504
+        return jsonify({"status": "error", "message": "SSH not ready"}), 504
 
-    summary = {"status": "launched+provisioning", "ip": ip, "remote_dir": REMOTE_DIR, "steps": []}
+    # 4) Provision (do your existing steps)
     try:
         ssh, scp = _mk_ssh(ip)
-
-        # 3) Bootstrap
         bootstrap_system_and_venv(ssh)
-        summary["steps"].append({"bootstrap": "ok"})
-
-        # 4) Upload code + requirements from current directory
         upload_code_and_requirements_from_cwd(ssh, scp)
-        summary["steps"].append({"upload": {"script": "detr_motion.py", "requirements": "remote-requirements.txt → requirements.txt"}})
-
-        # 5) pip install -r
         pip_install_requirements(ssh)
-        summary["steps"].append({"pip_install": "ok"})
 
-        # 6) Optional: run the script
         if RUN_AFTER_SETUP:
-            out = run_script(ssh)
-            summary["steps"].append({"run": "ok", "stdout_tail": "\n".join(out.splitlines()[-20:])})
+            run_script(ssh)
 
         scp.close()
         ssh.close()
-        summary["status"] = "launched+provisioned"
-        return jsonify(summary)
-
     except Exception as e:
-        summary["status"] = "error"
-        summary["message"] = str(e)
-        return jsonify(summary), 500
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+    # ✅ SIMPLE FINAL RESPONSE
+    return jsonify({
+        "status": "ready",
+        "message": "GPU setup done",
+        "ip": ip,
+        "instance_id": instance_id
+    })
 
 
 # ===============================
@@ -626,70 +673,113 @@ def api_replace_file():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+
 @app.get("/lambda/download-output")
 def api_download_output():
     """
-    Download an output file from the instance.
+    Download the output video (.mp4) and the corresponding .csv file
+    from the instance. Always returns a ZIP containing both.
+    The .csv file name is not provided, so we auto-detect the first .csv in REMOTE_DIR.
+
+    Before downloading, clears and recreates the local downloads folder to ensure clean state.
 
     Query params (optional):
       ip   = instance IP (uses saved IP from instance_info.txt if omitted)
-      name = remote filename in REMOTE_DIR (default: output_detr_motion_filtered.mp4)
 
     Example:
       GET /lambda/download-output?ip=12.34.56.78
-      GET /lambda/download-output?name=custom_output.mp4
     """
     try:
         ip = request.args.get("ip") or None
-        name = request.args.get("name") or OUTPUT_DEFAULT_NAME
 
-        local_path = pull_remote_file(ip=ip, remote_filename=name)
-        if not os.path.exists(local_path):
-            return jsonify({"status": "error", "message": f"File not found after download: {local_path}"}), 404
+        # Clear and recreate local downloads folder for clean state
+        if os.path.exists(DOWNLOADS_DIR):
+            import shutil
+            shutil.rmtree(DOWNLOADS_DIR)
+            print(f"Cleared existing downloads directory: {DOWNLOADS_DIR}")
+        
+        os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+        print(f"Created fresh downloads directory: {DOWNLOADS_DIR}")
 
-        # stream the file back to the client
-        return send_file(local_path, as_attachment=True, download_name=name)
+        # fixed video output name
+        video_name = OUTPUT_DEFAULT_NAME  # e.g., "output_detr_motion_filtered.mp4"
+
+        # 1) pull the video file
+        video_local = pull_remote_file(ip=ip, remote_filename=video_name)
+        if not os.path.exists(video_local):
+            return jsonify({"status": "error", "message": f"Video not found: {video_local}"}), 404
+
+        # 2) find a .csv file on the remote
+        ssh, scp = _mk_ssh(ip or get_saved_ip())
+        try:
+            code, out, err = _sh(ssh, f"ls -1 {REMOTE_DIR}/*.csv 2>/dev/null | head -n 1")
+            csv_remote = out.strip()
+        finally:
+            try: scp.close()
+            except Exception: pass
+            try: ssh.close()
+            except Exception: pass
+
+        if not csv_remote:
+            return jsonify({"status": "error", "message": "No CSV file found in remote directory"}), 404
+
+        csv_name = os.path.basename(csv_remote)
+        csv_local = pull_remote_file(ip=ip, remote_filename=csv_name)
+
+        # 3) build a ZIP with both files
+        tmp_dir = tempfile.mkdtemp(prefix="outputs_")
+        zip_path = os.path.join(tmp_dir, "outputs_bundle.zip")
+
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.write(video_local, arcname=os.path.basename(video_local))
+            zf.write(csv_local, arcname=os.path.basename(csv_local))
+
+        return send_file(zip_path, as_attachment=True, download_name="outputs_bundle.zip")
+
     except FileNotFoundError as e:
         return jsonify({"status": "error", "message": str(e)}), 404
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+
 @app.post("/upload-video")
 def upload_video():
     """
     Upload a video file to the input-video directory.
-    Expects a multipart/form-data request with 'video' file field.
+    The file is ALWAYS saved as input_video_4.mp4 (no transcoding).
+    Expects multipart/form-data with 'video' file field.
     """
     try:
         if 'video' not in request.files:
             return jsonify({"status": "error", "message": "No video file provided"}), 400
-        
+
         file = request.files['video']
         if file.filename == '':
             return jsonify({"status": "error", "message": "No file selected"}), 400
-        
-        # Validate file type
+
+        # Validate file type (we still check extensions, but we ALWAYS save as .mp4 filename)
         allowed_extensions = {'.mp4', '.mov', '.avi'}
-        file_ext = os.path.splitext(file.filename)[1].lower()
-        if file_ext not in allowed_extensions:
+        orig_ext = os.path.splitext(file.filename)[1].lower()
+        if orig_ext not in allowed_extensions:
             return jsonify({"status": "error", "message": "Invalid file type. Only MP4, MOV, AVI allowed"}), 400
-        
+
         # Ensure input-video directory exists
         os.makedirs(INPUT_VIDEO_DIR, exist_ok=True)
-        
-        # Save file to input-video directory
-        filepath = os.path.join(INPUT_VIDEO_DIR, file.filename)
-        file.save(filepath)
-        
+
+        # Always save using the fixed name
+        fixed_path = os.path.join(INPUT_VIDEO_DIR, FIXED_VIDEO_BASENAME)
+        file.save(fixed_path)  # overwrites if exists
+
         return jsonify({
             "status": "ok",
             "message": "Video uploaded successfully",
-            "filename": file.filename,
-            "path": filepath
+            "filename": FIXED_VIDEO_BASENAME,  # report the fixed name
+            "path": fixed_path
         })
-        
+
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
 
 
 # ===============================

@@ -4,5 +4,6 @@ torchvision
 opencv-python
 pillow
 pytesseract
-pandas
 timm
+numpy
+psutil

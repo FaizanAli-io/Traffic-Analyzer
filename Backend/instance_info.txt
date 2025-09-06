@@ -1,0 +1,2 @@
+instance_id=922a4d8754ea43debf757ef8efee3103
+ip=192.222.50.183
