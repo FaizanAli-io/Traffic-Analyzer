@@ -24,7 +24,7 @@ FIREWALL_RULESETS = [{"id": "7093760c5d4e4df2bf8584ae791526c4"}]
 
 # SSH config (update with your key and username)
 SSH_USERNAME = "ubuntu"   # usually "ubuntu"
-SSH_KEY_PATH = "C:/Users/hamza/Desktop/Desktop-Pc.pem"
+SSH_KEY_PATH = os.getenv("SSH_KEY_PATH")
 
 # Directory configuration
 DOWNLOADS_DIR = os.path.join(os.getcwd(), "downloads")
