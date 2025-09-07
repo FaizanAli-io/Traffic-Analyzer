@@ -36,8 +36,8 @@ OUTPUT_DEFAULT_NAME = "output_detr_motion_filtered.mp4"
 INSTANCE_INFO_FILE = os.path.join(os.getcwd(), "instance_info.txt")
 
 # Authentication
-ENV_USERNAME = os.getenv("USERID", "")
-ENV_PASSWORD = os.getenv("PASSWORD", "")
+ENV_USERNAME = "admin"
+ENV_PASSWORD = "admin"
 
 # Remote configuration
 REMOTE_DIR = "/home/ubuntu/myjob"
@@ -460,12 +460,25 @@ def upload_video_and_run(ip: str | None = None, video_filename: str | None = Non
         scp.put(local_path, remote_path)
 
         # 6) run inside venv and save logs
+        # remote_log = f"{REMOTE_DIR}/detr_motion.log"
+        # cmd = (
+        #     f"cd {REMOTE_DIR} && "
+        #     f"source {REMOTE_VENV}/bin/activate && "
+        #     f"pip install --no-cache-dir -r {REMOTE_REQ_NAME} && "
+        #     f"python {REMOTE_SCRIPT_NAME} "
+        #     f"> {remote_log} 2>&1"   # redirect both stdout and stderr to file
+        # )
+        # 6) run inside venv and save logs
         remote_log = f"{REMOTE_DIR}/detr_motion.log"
+
+        # Get current direction orientation
+        direction_orientation = getattr(app, 'direction_orientation', 0)
+
         cmd = (
             f"cd {REMOTE_DIR} && "
             f"source {REMOTE_VENV}/bin/activate && "
             f"pip install --no-cache-dir -r {REMOTE_REQ_NAME} && "
-            f"python {REMOTE_SCRIPT_NAME} "
+            f"python {REMOTE_SCRIPT_NAME} --direction-orientation {direction_orientation} "
             f"> {remote_log} 2>&1"   # redirect both stdout and stderr to file
         )
 
@@ -781,7 +794,59 @@ def upload_video():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-
+@app.post("/lambda/set-direction-orientation")
+def api_set_direction_orientation():
+    """
+    Set the direction orientation for the detector.
+    
+    JSON body:
+    {
+      "action": "rotate_clockwise" | "rotate_counterclockwise" | "get_current"
+    }
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        action = body.get("action")
+        
+        if not action:
+            return jsonify({"status": "error", "message": "Action required"}), 400
+            
+        # Store the orientation state (you might want to persist this)
+        if not hasattr(app, 'direction_orientation'):
+            app.direction_orientation = 0  # 0=North up, 1=East up, 2=South up, 3=West up
+            
+        base_directions = ["North", "East", "South", "West"]
+        
+        if action == "rotate_clockwise":
+            app.direction_orientation = (app.direction_orientation + 1) % 4
+        elif action == "rotate_counterclockwise":
+            app.direction_orientation = (app.direction_orientation - 1) % 4
+        elif action != "get_current":
+            return jsonify({"status": "error", "message": "Invalid action"}), 400
+            
+        # Get current mapping
+        current_directions = [
+            base_directions[app.direction_orientation],                    # top
+            base_directions[(app.direction_orientation + 1) % 4],         # right  
+            base_directions[(app.direction_orientation + 2) % 4],         # bottom
+            base_directions[(app.direction_orientation + 3) % 4]          # left
+        ]
+        
+        mapping = {
+            "top": current_directions[0],
+            "right": current_directions[1],
+            "bottom": current_directions[2],
+            "left": current_directions[3]
+        }
+        
+        return jsonify({
+            "status": "ok",
+            "orientation": app.direction_orientation,
+            "mapping": mapping
+        })
+        
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 

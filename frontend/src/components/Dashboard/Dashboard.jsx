@@ -31,6 +31,85 @@ export default function Dashboard() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadErr, setDownloadErr] = useState("");
 
+  // Direction Control
+  const [directionMapping, setDirectionMapping] = useState({
+    top: "North",
+    right: "East", 
+    bottom: "South",
+    left: "West"
+  });
+  const [isRotating, setIsRotating] = useState(false);
+  const [directionMsg, setDirectionMsg] = useState("");
+  const [directionErr, setDirectionErr] = useState("");
+
+  const fetchCurrentDirectionMapping = async () => {
+    try {
+      const resp = await fetch(`${API_BASE}/lambda/set-direction-orientation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "get_current" }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (resp.ok && data.status === "ok") {
+        setDirectionMapping(data.mapping);
+      }
+    } catch (e) {
+      console.error("Failed to fetch direction mapping:", e);
+    }
+  };
+
+  // Add this with your other useEffect hooks (if any)
+  React.useEffect(() => {
+    fetchCurrentDirectionMapping();
+  }, []);
+
+  const rotateDirectionClockwise = async () => {
+    setIsRotating(true);
+    setDirectionErr("");
+    setDirectionMsg("Rotating clockwise...");
+    try {
+      const resp = await fetch(`${API_BASE}/lambda/set-direction-orientation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "rotate_clockwise" }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.status !== "ok") {
+        throw new Error(data.message || `Rotation failed (HTTP ${resp.status})`);
+      }
+      setDirectionMapping(data.mapping);
+      setDirectionMsg("Rotated clockwise ↻");
+    } catch (e) {
+      setDirectionErr(e.message || "Rotation failed.");
+      setDirectionMsg("");
+    } finally {
+      setIsRotating(false);
+    }
+  };
+
+  const rotateDirectionCounterclockwise = async () => {
+    setIsRotating(true);
+    setDirectionErr("");
+    setDirectionMsg("Rotating counter-clockwise...");
+    try {
+      const resp = await fetch(`${API_BASE}/lambda/set-direction-orientation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "rotate_counterclockwise" }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.status !== "ok") {
+        throw new Error(data.message || `Rotation failed (HTTP ${resp.status})`);
+      }
+      setDirectionMapping(data.mapping);
+      setDirectionMsg("Rotated counter-clockwise ↺");
+    } catch (e) {
+      setDirectionErr(e.message || "Rotation failed.");
+      setDirectionMsg("");
+    } finally {
+      setIsRotating(false);
+    }
+  };
   const startGpu = async () => {
     setIsLaunching(true);
     setLaunchErr("");
@@ -343,6 +422,64 @@ export default function Dashboard() {
               <div className="dashboard-status dashboard-error">
                 <span className="dashboard-status-icon">❌</span>
                 {processErr}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Direction Control Section */}
+        <div className="dashboard-card">
+          <h2 className="dashboard-card-title">
+            <span className="dashboard-card-icon">🧭</span>
+            Direction Mapping
+          </h2>
+          
+          <div className="direction-control-area">
+            <div className="direction-compass">
+              <div className="compass-center">
+                <div className="compass-direction compass-north">{directionMapping.top}</div>
+                <div className="compass-direction compass-east">{directionMapping.right}</div>
+                <div className="compass-direction compass-south">{directionMapping.bottom}</div>
+                <div className="compass-direction compass-west">{directionMapping.left}</div>
+              </div>
+            </div>
+            
+            <div className="direction-button-group">
+              <button
+                onClick={rotateDirectionClockwise}
+                disabled={isRotating}
+                className={`dashboard-btn dashboard-btn-secondary ${isRotating ? 'dashboard-loading' : ''}`}
+              >
+                {isRotating && <div className="dashboard-spinner"></div>}
+                Rotate Clockwise ↻
+              </button>
+              
+              <button
+                onClick={rotateDirectionCounterclockwise}
+                disabled={isRotating}
+                className={`dashboard-btn dashboard-btn-secondary ${isRotating ? 'dashboard-loading' : ''}`}
+              >
+                {isRotating && <div className="dashboard-spinner"></div>}
+                Rotate Counter ↺
+              </button>
+            </div>
+            
+            <div className="direction-info">
+              <small>Adjust the compass to match your camera's orientation</small>
+            </div>
+          </div>
+
+          <div className="dashboard-status-area">
+            {directionMsg && (
+              <div className="dashboard-status dashboard-success">
+                <span className="dashboard-status-icon">✅</span>
+                {directionMsg}
+              </div>
+            )}
+            {directionErr && (
+              <div className="dashboard-status dashboard-error">
+                <span className="dashboard-status-icon">❌</span>
+                {directionErr}
               </div>
             )}
           </div>
