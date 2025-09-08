@@ -17,7 +17,7 @@ import torchvision.transforms as transforms
 import os
 import gc
 import psutil
-# from google.colab.patches import cv2_imshow
+from google.colab.patches import cv2_imshow
 
 
 width = None
@@ -110,7 +110,7 @@ class TimestampExtractor:
                     pass
 
             # If no pattern matches, return raw text for debugging
-            raw_text = f"{text}" if text else "No timestamp detected"
+            raw_text = f"Raw OCR: {text}" if text else "No timestamp detected"
             return None, raw_text
 
         except Exception as e:
@@ -1081,7 +1081,7 @@ class GPUOptimizedDETRDetector:
 
             # Enhanced label with direction info
             label = f"ID:{object_id} {self.target_classes[class_id]} {confidence:.2f}{duration_text}"
-            direction_label = f"{origin_text} to {dest_text}"
+            direction_label = f"{origin_text} -> {dest_text}"
 
             font_scale = 0.6
             thickness = 2
@@ -1288,8 +1288,7 @@ class GPUOptimizedDETRDetector:
 
                 # Commented out cv2.imshow for terminal compatibility
                 if display:
-                    print("###")
-                    # cv2_imshow(annotated_frame)
+                    cv2_imshow(annotated_frame)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         break
 
@@ -1438,7 +1437,7 @@ class GPUOptimizedDETRDetector:
                         'last_timestamp': record['last_timestamp'],
                         'origin': record['origin'],
                         'destination': record['destination'],
-                        # 'zone_changes': record.get('zone_changes', 0),
+                        'zone_changes': record.get('zone_changes', 0),
                         'zone_path': ' -> '.join(record['zone_history']),
                         # 'status': record.get('status', 'active')
                     }
@@ -1501,7 +1500,7 @@ class GPUOptimizedDETRDetector:
 
         # Origin-Destination flow analysis
         if 'origin' in df.columns and 'destination' in df.columns:
-            summary_lines.append("\nOrigin to Destination flows:")
+            summary_lines.append("\nOrigin -> Destination flows:")
 
             # Group by origin-destination pairs
             flow_counts = df.groupby(['origin', 'destination']).size().reset_index(name='count')
@@ -1515,7 +1514,7 @@ class GPUOptimizedDETRDetector:
                 if origin == destination:
                     summary_lines.append(f"  {origin} (stayed): {count}")
                 else:
-                    summary_lines.append(f"  {origin} to {destination}: {count}")
+                    summary_lines.append(f"  {origin} -> {destination}: {count}")
 
         # Zone change analysis
         # if 'zone_changes' in df.columns:
@@ -1652,19 +1651,10 @@ class GPUOptimizedDETRDetector:
         except Exception as e:
             print(f"\n⚠ Manual duration CSV export failed: {e}")
 
-import argparse
-
-# Modify the main() function to accept command line arguments
 def main():
     """
     Main function for GPU-optimized DETR detection - Terminal Compatible
     """
-    # Add argument parsing
-    parser = argparse.ArgumentParser(description='GPU-Optimized DETR Vehicle Detection')
-    parser.add_argument('--direction-orientation', type=int, default=0, 
-                       help='Direction orientation (0=North up, 1=East up, 2=South up, 3=West up)')
-    args = parser.parse_args()
-    
     print("="*80)
     print("GPU-OPTIMIZED DETR VEHICLE DETECTION - TERMINAL VERSION")
     print("="*80)
@@ -1684,13 +1674,11 @@ def main():
         enable_mixed_precision=True  # Faster inference on modern GPUs
     )
 
-    # NEW: Set the direction orientation from command line argument
-    detector.tracker.direction_manager.current_orientation = args.direction_orientation
-    print(f"Direction orientation set to: {args.direction_orientation}")
-    print(f"Direction mapping: {detector.tracker.direction_manager.get_current_mapping()}")
+    # detector.rotate_directions_clockwise()
+    # detector.rotate_directions_clockwise()
 
     # Configure paths
-    video_path = "input_video_4.mp4"  # Updated to match your fixed filename
+    video_path = "input_video_5.mp4"  # Update this path
     output_path = "output_detr_motion_filtered.mp4"
 
     try:
