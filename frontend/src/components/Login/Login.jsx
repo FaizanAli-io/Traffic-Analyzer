@@ -10,7 +10,7 @@ function Login({ onLogin }) {
   const [errors, setErrors] = useState({});
   const [isLoading, setIsLoading] = useState(false);
 
-  const navigate = useNavigate(); // ✅ hook for navigation
+  const navigate = useNavigate();
 
   const validateForm = () => {
     const newErrors = {};
@@ -36,8 +36,16 @@ function Login({ onLogin }) {
       const data = await resp.json().catch(() => ({}));
 
       if (resp.ok && data?.success) {
+        // Save login state to localStorage
+        const userSession = {
+          isLoggedIn: true,
+          username: username,
+          loginTime: new Date().toISOString()
+        };
+        localStorage.setItem('userSession', JSON.stringify(userSession));
+        
         onLogin?.(); // optional callback
-        navigate('/dashboard'); // ✅ redirect after successful login
+        navigate('/dashboard'); // redirect after successful login
       } else {
         setErrors({
           general: data?.error || `Login failed (status ${resp.status})`

@@ -1,0 +1,2 @@
+instance_id=71f75ea22b8f40d08b870089c5ea8bb6
+ip=192.222.59.150

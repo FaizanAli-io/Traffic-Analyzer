@@ -370,3 +370,113 @@
   border-color: #6366f1;
   background: rgba(99, 102, 241, 0.05);
 }
+
+/* Direction Control Styles */
+.direction-control-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.direction-compass {
+  position: relative;
+  width: 160px;
+  height: 160px;
+  border: 3px solid #e5e7eb;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.compass-center {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.compass-direction {
+  position: absolute;
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: #374151;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid #d1d5db;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.compass-north {
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #dc2626;
+}
+
+.compass-east {
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #ea580c;
+}
+
+.compass-south {
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #16a34a;
+}
+
+.compass-west {
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #2563eb;
+}
+
+.direction-button-group {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.direction-info {
+  text-align: center;
+  color: #6b7280;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.direction-info small {
+  display: block;
+}
+
+/* Responsive adjustments for direction control */
+@media (max-width: 768px) {
+  .direction-compass {
+    width: 140px;
+    height: 140px;
+  }
+  
+  .compass-direction {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.4rem;
+  }
+  
+  .direction-button-group {
+    flex-direction: column;
+    width: 100%;
+  }
+  
+  .direction-button-group .dashboard-btn {
+    width: 100%;
+  }
+}

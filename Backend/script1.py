@@ -460,12 +460,25 @@ def upload_video_and_run(ip: str | None = None, video_filename: str | None = Non
         scp.put(local_path, remote_path)
 
         # 6) run inside venv and save logs
+        # remote_log = f"{REMOTE_DIR}/detr_motion.log"
+        # cmd = (
+        #     f"cd {REMOTE_DIR} && "
+        #     f"source {REMOTE_VENV}/bin/activate && "
+        #     f"pip install --no-cache-dir -r {REMOTE_REQ_NAME} && "
+        #     f"python {REMOTE_SCRIPT_NAME} "
+        #     f"> {remote_log} 2>&1"   # redirect both stdout and stderr to file
+        # )
+        # 6) run inside venv and save logs
         remote_log = f"{REMOTE_DIR}/detr_motion.log"
+
+        # Get current direction orientation
+        direction_orientation = getattr(app, 'direction_orientation', 0)
+
         cmd = (
             f"cd {REMOTE_DIR} && "
             f"source {REMOTE_VENV}/bin/activate && "
             f"pip install --no-cache-dir -r {REMOTE_REQ_NAME} && "
-            f"python {REMOTE_SCRIPT_NAME} "
+            f"python {REMOTE_SCRIPT_NAME} --direction-orientation {direction_orientation} "
             f"> {remote_log} 2>&1"   # redirect both stdout and stderr to file
         )
 
@@ -781,7 +794,59 @@ def upload_video():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-
+@app.post("/lambda/set-direction-orientation")
+def api_set_direction_orientation():
+    """
+    Set the direction orientation for the detector.
+    
+    JSON body:
+    {
+      "action": "rotate_clockwise" | "rotate_counterclockwise" | "get_current"
+    }
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        action = body.get("action")
+        
+        if not action:
+            return jsonify({"status": "error", "message": "Action required"}), 400
+            
+        # Store the orientation state (you might want to persist this)
+        if not hasattr(app, 'direction_orientation'):
+            app.direction_orientation = 0  # 0=North up, 1=East up, 2=South up, 3=West up
+            
+        base_directions = ["North", "East", "South", "West"]
+        
+        if action == "rotate_clockwise":
+            app.direction_orientation = (app.direction_orientation + 1) % 4
+        elif action == "rotate_counterclockwise":
+            app.direction_orientation = (app.direction_orientation - 1) % 4
+        elif action != "get_current":
+            return jsonify({"status": "error", "message": "Invalid action"}), 400
+            
+        # Get current mapping
+        current_directions = [
+            base_directions[app.direction_orientation],                    # top
+            base_directions[(app.direction_orientation + 1) % 4],         # right  
+            base_directions[(app.direction_orientation + 2) % 4],         # bottom
+            base_directions[(app.direction_orientation + 3) % 4]          # left
+        ]
+        
+        mapping = {
+            "top": current_directions[0],
+            "right": current_directions[1],
+            "bottom": current_directions[2],
+            "left": current_directions[3]
+        }
+        
+        return jsonify({
+            "status": "ok",
+            "orientation": app.direction_orientation,
+            "mapping": mapping
+        })
+        
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 
@@ -848,6 +913,80 @@ def api_terminate_instance():
         return jsonify({"status": "error", "message": str(e)}), 500
     except Exception as e:
         return jsonify({"status": "error", "message": f"Unexpected error: {str(e)}"}), 500
+
+# ===============================
+# LIST + TERMINATE (SINGLE)
+# ===============================
+
+@app.get("/lambda/instances")
+def api_list_instances():
+    """
+    Return your Lambda Cloud instances (optionally filtered).
+    Query params:
+      status=active|booting|unhealthy|terminated|all   (default: active)
+    """
+    try:
+        want = (request.args.get("status") or "active").lower()
+        r = cloud_get("/instances")
+        if not r.ok:
+            return (r.text, r.status_code, {"Content-Type": "application/json"})
+
+        payload = r.json()
+        items = payload.get("data") or payload.get("instances") or []
+        if want != "all":
+            items = [i for i in items if (i.get("status", "").lower() == want)]
+
+        concise = [
+            {
+                "id": i.get("id"),
+                "name": i.get("name"),
+                "status": i.get("status"),
+                "ip": i.get("ip") or i.get("ipv4"),
+                "region_name": i.get("region_name"),
+                "instance_type_name": i.get("instance_type_name"),
+                "created_at": i.get("created_at"),
+            }
+            for i in items
+        ]
+        return jsonify({"status": "ok", "count": len(concise), "instances": concise})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.post("/lambda/terminate-by-id")
+def api_terminate_by_id():
+    """
+    Terminate one instance by ID.
+    Body JSON: { "instance_id": "i-xxxx" }
+    If the ID matches the saved one, instance_info.txt is removed.
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        instance_id = (body.get("instance_id") or "").strip()
+        if not instance_id:
+            return jsonify({"status": "error", "message": "instance_id required"}), 400
+
+        r = cloud_post("/instance-operations/terminate", {"instance_ids": [instance_id]})
+        if not r.ok:
+            return (r.text, r.status_code, {"Content-Type": "application/json"})
+
+        saved_id, _ = load_instance_info()
+        if saved_id and saved_id == instance_id:
+            try:
+                if os.path.exists(INSTANCE_INFO_FILE):
+                    os.remove(INSTANCE_INFO_FILE)
+            except Exception:
+                pass
+
+        return jsonify({
+            "status": "ok",
+            "message": f"Instance {instance_id} terminated",
+            "lambda_response": r.json()
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 # ===============================
 # MAIN
 # ===============================
