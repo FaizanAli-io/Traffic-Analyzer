@@ -1562,11 +1562,10 @@ class GPUOptimizedDETRDetector:
 
             with open(csv_filename, 'w', newline='') as csvfile:
                 headers = ['object_id', 'object_type', 'first_timestamp', 'last_timestamp',
-                          'origin', 'destination', 'zone_changes', 'zone_path', 'status']
+                        'origin', 'destination', 'zone_path']
                 csvfile.write(','.join(headers) + '\n')
 
                 for obj_id, record in moving_records.items():
-                    zone_changes = len(set(record['zone_history'])) - 1
                     zone_path = ' → '.join(record['zone_history'])
 
                     row = [
@@ -1576,17 +1575,71 @@ class GPUOptimizedDETRDetector:
                         record['last_timestamp'],
                         record['origin'],
                         record['destination'],
-                        str(zone_changes),
-                        zone_path,
-                        record.get('status', 'active')
+                        zone_path
                     ]
                     csvfile.write(','.join(row) + '\n')
 
             print(f"\n📊 Detection records exported to: {csv_filename}")
             print(f"  • Total records: {len(moving_records)}")
+            
+            # Generate summary directly without class
+            self.generate_tracking_summary_manual(moving_records, csv_filename)
 
         except Exception as e:
             print(f"\n⚠ Manual CSV export failed: {e}")
+
+    def generate_tracking_summary_manual(self, moving_records, csv_filename):
+        """Generate comprehensive tracking summary for manual export"""
+        summary_lines = []
+        summary_lines.append("\n\nTRACKING SUMMARY:")
+        summary_lines.append("="*50)
+        summary_lines.append(f"Total moving objects tracked: {len(moving_records)}")
+
+        # Object type summary
+        type_counts = {}
+        for record in moving_records.values():
+            obj_type = record['object_type']
+            type_counts[obj_type] = type_counts.get(obj_type, 0) + 1
+        
+        summary_lines.append("\nObject type distribution:")
+        for obj_type, count in sorted(type_counts.items(), key=lambda x: x[1], reverse=True):
+            summary_lines.append(f"  {obj_type}: {count}")
+
+        # Origin-Destination flow analysis
+        summary_lines.append("\nOrigin to Destination flows:")
+        
+        # Group by origin-destination pairs manually
+        flow_counts = {}
+        for record in moving_records.values():
+            origin = record['origin']
+            destination = record['destination']
+            key = (origin, destination)
+            flow_counts[key] = flow_counts.get(key, 0) + 1
+        
+        # Sort by count (descending)
+        sorted_flows = sorted(flow_counts.items(), key=lambda x: x[1], reverse=True)
+        
+        for (origin, destination), count in sorted_flows:
+            if origin == destination:
+                summary_lines.append(f"  {origin} (stayed): {count}")
+            else:
+                summary_lines.append(f"  {origin} to {destination}: {count}")
+
+        # Time range analysis
+        first_timestamps = [record['first_timestamp'] for record in moving_records.values()]
+        last_timestamps = [record['last_timestamp'] for record in moving_records.values()]
+        
+        summary_lines.append(f"\nTime range:")
+        summary_lines.append(f" Video start: {min(first_timestamps)}")
+        summary_lines.append(f" Video stop: {max(last_timestamps)}")
+
+        # Append summary to CSV file
+        with open(csv_filename, "a", encoding="utf-8") as f:
+            for line in summary_lines:
+                f.write(line + "\n")
+
+        # Print summary to console
+        print("\n".join(summary_lines))
 
     def export_duration_data(self):
         """Export duration data to CSV"""
