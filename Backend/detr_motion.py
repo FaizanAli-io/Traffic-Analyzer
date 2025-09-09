@@ -1,5 +1,6 @@
 # GPU-Optimized Vehicle Detection with Motion Filtering and Timestamp Extraction
 # Optimized for Ubuntu terminal usage
+
 import cv2
 import numpy as np
 import torch
@@ -109,7 +110,7 @@ class TimestampExtractor:
                     pass
 
             # If no pattern matches, return raw text for debugging
-            raw_text = f"Raw OCR: {text}" if text else "No timestamp detected"
+            raw_text = f"{text}" if text else "No timestamp detected"
             return None, raw_text
 
         except Exception as e:
@@ -295,7 +296,7 @@ class EnhancedObjectTracker:
 
         self.object_directions[self.next_object_id] = {
             'origin': origin_direction,
-            'destination': origin_direction,
+            'destination': None,
             'first_centroid': centroid,
             'last_centroid': centroid
         }
@@ -308,20 +309,25 @@ class EnhancedObjectTracker:
         return object_id
 
     def deregister(self, object_id):
-        """Remove an object and calculate final duration + destination direction"""
-        # NEW: Determine destination direction
+        """Remove an object and calculate final duration + destination direction + CREATE CSV RECORD"""
+        # Determine final destination direction
         if object_id in self.object_directions:
             last_centroid = self.object_directions[object_id]['last_centroid']
             destination_direction = self.direction_manager.determine_direction_from_position(
                 last_centroid, self.frame_width, self.frame_height
             )
-            self.object_directions[object_id]['destination'] = destination_direction
+
+            # Update final destination
+            if destination_direction and destination_direction != self.object_directions[object_id]['origin']:
+                self.object_directions[object_id]['destination'] = destination_direction
+
+            origin = self.object_directions[object_id]['origin']
+            destination = self.object_directions[object_id]['destination']
 
             if destination_direction:
-                origin = self.object_directions[object_id]['origin']
                 print(f"  ← Object {object_id} exited to {destination_direction} (from {origin})")
 
-        # ... existing deregistration code remains the same ...
+        # Calculate duration and CREATE CSV RECORD for confirmed moving objects
         if (object_id in self.object_timestamps and
             self.objects.get(object_id, {}).get('confirmed_moving', False)):
 
@@ -343,20 +349,25 @@ class EnhancedObjectTracker:
 
             del self.object_timestamps[object_id]
 
-        # Clean up from motion detector
-        self.motion_detector.confirmed_moving_objects.discard(object_id)
-        if object_id in self.motion_detector.candidate_objects:
-            del self.motion_detector.candidate_objects[object_id]
+            # Clean up from motion detector
+            self.motion_detector.confirmed_moving_objects.discard(object_id)
+            if object_id in self.motion_detector.candidate_objects:
+                del self.motion_detector.candidate_objects[object_id]
 
-        # Clean up main tracking data
-        if object_id in self.objects:
-            del self.objects[object_id]
-        if object_id in self.disappeared:
-            del self.disappeared[object_id]
-        if object_id in self.object_classes:
-            del self.object_classes[object_id]
-        if object_id in self.object_history:
-            del self.object_history[object_id]
+            # Clean up main tracking data
+            if object_id in self.objects:
+                del self.objects[object_id]
+            if object_id in self.disappeared:
+                del self.disappeared[object_id]
+            if object_id in self.object_classes:
+                del self.object_classes[object_id]
+            if object_id in self.object_history:
+                del self.object_history[object_id]
+
+            # NEW: Finalize detection record before cleanup
+            if hasattr(self, 'detector') and hasattr(self.detector, 'finalize_detection_record'):
+                self.detector.finalize_detection_record(object_id)
+
 
     def calculate_distance(self, point_a, point_b):
         """Calculate Euclidean distance between two points"""
@@ -381,188 +392,156 @@ class EnhancedObjectTracker:
 
         return (int(predicted_x), int(predicted_y))
 
+
+
     def update(self, detections, timestamp=None):
-        """Update tracker with motion-filtered detections"""
-        # ... most of existing update code remains the same ...
-        detections = self.remove_duplicate_detections(detections)
+          """Update tracker with motion-filtered detections"""
+          detections = self.remove_duplicate_detections(detections)
 
-        if len(detections) == 0:
-            for object_id in list(self.disappeared.keys()):
-                self.disappeared[object_id] += 1
-                if self.disappeared[object_id] > self.max_disappeared:
-                    self.deregister(object_id)
-            return {}
+          if len(detections) == 0:
+              for object_id in list(self.disappeared.keys()):
+                  self.disappeared[object_id] += 1
+                  if self.disappeared[object_id] > self.max_disappeared:
+                      self.deregister(object_id)
+              return {}
 
-        if len(self.objects) == 0:
-            tracked_objects = {}
-            for detection in detections:
-                centroid, class_id, confidence, bbox = detection
-                object_id = self.register(centroid, class_id, confidence, bbox, timestamp)
-                tracked_objects[object_id] = self.objects[object_id]
-            return tracked_objects
+          if len(self.objects) == 0:
+              tracked_objects = {}
+              for detection in detections:
+                  centroid, class_id, confidence, bbox = detection
+                  object_id = self.register(centroid, class_id, confidence, bbox, timestamp)
+                  tracked_objects[object_id] = self.objects[object_id]
+              return tracked_objects
 
-        # Enhanced matching with both distance and IoU
-        object_ids = list(self.objects.keys())
-        object_centroids = []
-        object_bboxes = []
+          # Enhanced matching with both distance and IoU
+          object_ids = list(self.objects.keys())
+          object_centroids = []
+          object_bboxes = []
 
-        for object_id in object_ids:
-            predicted_pos = self.predict_next_position(object_id)
-            object_centroids.append(predicted_pos)
-            object_bboxes.append(self.objects[object_id]['bbox'])
+          for object_id in object_ids:
+              predicted_pos = self.predict_next_position(object_id)
+              object_centroids.append(predicted_pos)
+              object_bboxes.append(self.objects[object_id]['bbox'])
 
-        detection_centroids = [det[0] for det in detections]
-        detection_bboxes = [det[3] for det in detections]
+          detection_centroids = [det[0] for det in detections]
+          detection_bboxes = [det[3] for det in detections]
 
-        # Calculate combined distance and IoU matrix
-        assignment_scores = np.zeros((len(object_centroids), len(detection_centroids)))
+          # Calculate combined distance and IoU matrix
+          assignment_scores = np.zeros((len(object_centroids), len(detection_centroids)))
 
-        for i, (obj_centroid, obj_bbox) in enumerate(zip(object_centroids, object_bboxes)):
-            for j, (det_centroid, det_bbox) in enumerate(zip(detection_centroids, detection_bboxes)):
-                distance = self.calculate_distance(obj_centroid, det_centroid)
-                iou = self.calculate_iou(obj_bbox, det_bbox)
+          for i, (obj_centroid, obj_bbox) in enumerate(zip(object_centroids, object_bboxes)):
+              for j, (det_centroid, det_bbox) in enumerate(zip(detection_centroids, detection_bboxes)):
+                  distance = self.calculate_distance(obj_centroid, det_centroid)
+                  iou = self.calculate_iou(obj_bbox, det_bbox)
 
-                distance_score = distance / self.max_distance
-                iou_score = iou
-                assignment_scores[i][j] = distance_score - iou_score
+                  distance_score = distance / self.max_distance
+                  iou_score = iou
+                  assignment_scores[i][j] = distance_score - iou_score
 
-        # Assignment logic
-        used_detection_indices = set()
-        used_object_indices = set()
-        tracked_objects = {}
+          # Assignment logic
+          used_detection_indices = set()
+          used_object_indices = set()
+          tracked_objects = {}
 
-        assignments = []
-        for i in range(len(object_centroids)):
-            for j in range(len(detection_centroids)):
-                assignments.append((assignment_scores[i][j], i, j))
-        assignments.sort()
+          assignments = []
+          for i in range(len(object_centroids)):
+              for j in range(len(detection_centroids)):
+                  assignments.append((assignment_scores[i][j], i, j))
+          assignments.sort()
 
-        # for score, obj_idx, det_idx in assignments:
-        #     if obj_idx in used_object_indices or det_idx in used_detection_indices:
-        #         continue
+          # Handle matched detections
+          for score, obj_idx, det_idx in assignments:
+              if obj_idx in used_object_indices or det_idx in used_detection_indices:
+                  continue
 
-        #     object_id = object_ids[obj_idx]
-        #     detection = detections[det_idx]
-        #     centroid, class_id, confidence, bbox = detection
+              object_id = object_ids[obj_idx]
+              detection = detections[det_idx]
+              centroid, class_id, confidence, bbox = detection
 
-        #     distance = self.calculate_distance(object_centroids[obj_idx], centroid)
-        #     iou = self.calculate_iou(object_bboxes[obj_idx], bbox)
+              distance = self.calculate_distance(object_centroids[obj_idx], centroid)
+              iou = self.calculate_iou(object_bboxes[obj_idx], bbox)
 
-        #     if distance <= self.max_distance or iou > 0.1:
-        #         existing_class = self.object_classes[object_id]
-        #         vehicle_classes = {2, 3, 5, 7}
-        #         class_match = (existing_class == class_id or
-        #                      (existing_class in vehicle_classes and class_id in vehicle_classes))
+              if distance <= self.max_distance or iou > 0.1:
+                  existing_class = self.object_classes[object_id]
+                  vehicle_classes = {2, 3, 5, 7}
+                  class_match = (existing_class == class_id or
+                              (existing_class in vehicle_classes and class_id in vehicle_classes))
 
-        #         if class_match:
-        #             self.objects[object_id].update({
-        #                 'centroid': centroid,
-        #                 'confidence': confidence,
-        #                 'bbox': bbox,
-        #                 'last_seen': time.time()
-        #             })
-        #             self.disappeared[object_id] = 0
-        #             self.object_history[object_id].append(centroid)
+                  if class_match:
+                      self.objects[object_id].update({
+                          'centroid': centroid,
+                          'confidence': confidence,
+                          'bbox': bbox,
+                          'last_seen': time.time()
+                      })
+                      self.disappeared[object_id] = 0
+                      self.object_history[object_id].append(centroid)
 
-        #             # NEW: Update last centroid for direction tracking
-        #             if object_id in self.object_directions:
-        #                 self.object_directions[object_id]['last_centroid'] = centroid
+                      # IMPROVED: Update destination logic
+                      if object_id in self.object_directions:
+                          self.object_directions[object_id]['last_centroid'] = centroid
 
-        #             is_moving = self.motion_detector.is_moving(
-        #                 object_id, centroid, self.object_history[object_id]
-        #             )
+                          # Get current zone
+                          current_zone = self.direction_manager.determine_direction_from_position(
+                              centroid, self.frame_width, self.frame_height
+                          )
 
-        #             if is_moving:
-        #                 self.objects[object_id]['confirmed_moving'] = True
+                          origin = self.object_directions[object_id]['origin']
 
-        #                 if timestamp and object_id in self.object_timestamps:
-        #                     self.object_timestamps[object_id]['last_seen_timestamp'] = timestamp
+                          # Update destination only if:
+                          # 1. Current zone is valid
+                          # 2. Current zone is different from origin
+                          # 3. Object has moved significantly (confirmed moving)
+                          if (current_zone and
+                              current_zone != origin and
+                              self.objects[object_id].get('confirmed_moving', False)):
 
-        #             if len(self.object_history[object_id]) > 10:
-        #                 self.object_history[object_id] = self.object_history[object_id][-10:]
+                              # Only update if destination has actually changed
+                              prev_dest = self.object_directions[object_id]['destination']
+                              if prev_dest != current_zone:
+                                  self.object_directions[object_id]['destination'] = current_zone
+                                  print(f"  → Object {object_id} destination updated: {origin} → {current_zone}")
 
-        #             tracked_objects[object_id] = self.objects[object_id]
+                      is_moving = self.motion_detector.is_moving(
+                          object_id, centroid, self.object_history[object_id]
+                      )
 
-        #             used_object_indices.add(obj_idx)
-        #             used_detection_indices.add(det_idx)
-        # Handle matched detections
-        for score, obj_idx, det_idx in assignments:
-            if obj_idx in used_object_indices or det_idx in used_detection_indices:
-                continue
+                      if is_moving:
+                          self.objects[object_id]['confirmed_moving'] = True
 
-            object_id = object_ids[obj_idx]
-            detection = detections[det_idx]
-            centroid, class_id, confidence, bbox = detection
+                          if timestamp and object_id in self.object_timestamps:
+                              self.object_timestamps[object_id]['last_seen_timestamp'] = timestamp
 
-            distance = self.calculate_distance(object_centroids[obj_idx], centroid)
-            iou = self.calculate_iou(object_bboxes[obj_idx], bbox)
+                      if len(self.object_history[object_id]) > 10:
+                          self.object_history[object_id] = self.object_history[object_id][-10:]
 
-            if distance <= self.max_distance or iou > 0.1:
-                existing_class = self.object_classes[object_id]
-                vehicle_classes = {2, 3, 5, 7}
-                class_match = (existing_class == class_id or
-                            (existing_class in vehicle_classes and class_id in vehicle_classes))
+                      tracked_objects[object_id] = self.objects[object_id]
 
-                if class_match:
-                    self.objects[object_id].update({
-                        'centroid': centroid,
-                        'confidence': confidence,
-                        'bbox': bbox,
-                        'last_seen': time.time()
-                    })
-                    self.disappeared[object_id] = 0
-                    self.object_history[object_id].append(centroid)
+                      used_object_indices.add(obj_idx)
+                      used_detection_indices.add(det_idx)
 
-                    # UPDATE: Continuously update destination based on current position
-                    if object_id in self.object_directions:
-                        self.object_directions[object_id]['last_centroid'] = centroid
-                        # Update destination to current zone
-                        current_destination = self.direction_manager.determine_direction_from_position(
-                            centroid, self.frame_width, self.frame_height
-                        )
-                        self.object_directions[object_id]['destination'] = current_destination
+          # Handle unmatched detections
+          for det_idx, detection in enumerate(detections):
+              if det_idx not in used_detection_indices:
+                  centroid, class_id, confidence, bbox = detection
+                  object_id = self.register(centroid, class_id, confidence, bbox, timestamp)
+                  tracked_objects[object_id] = self.objects[object_id]
 
-                    is_moving = self.motion_detector.is_moving(
-                        object_id, centroid, self.object_history[object_id]
-                    )
+          # Handle unmatched existing objects
+          for obj_idx in range(len(object_ids)):
+              if obj_idx not in used_object_indices:
+                  object_id = object_ids[obj_idx]
+                  self.disappeared[object_id] += 1
 
-                    if is_moving:
-                        self.objects[object_id]['confirmed_moving'] = True
+                  if self.disappeared[object_id] <= self.max_disappeared:
+                      tracked_objects[object_id] = self.objects[object_id]
+                  else:
+                      self.deregister(object_id)
 
-                        if timestamp and object_id in self.object_timestamps:
-                            self.object_timestamps[object_id]['last_seen_timestamp'] = timestamp
+          # Clean up motion detector
+          self.motion_detector.cleanup_stale_candidates(list(self.objects.keys()))
 
-                    if len(self.object_history[object_id]) > 10:
-                        self.object_history[object_id] = self.object_history[object_id][-10:]
-
-                    tracked_objects[object_id] = self.objects[object_id]
-
-                    used_object_indices.add(obj_idx)
-                    used_detection_indices.add(det_idx)
-
-        # Handle unmatched detections
-        for det_idx, detection in enumerate(detections):
-            if det_idx not in used_detection_indices:
-                centroid, class_id, confidence, bbox = detection
-                object_id = self.register(centroid, class_id, confidence, bbox, timestamp)
-                tracked_objects[object_id] = self.objects[object_id]
-
-        # Handle unmatched existing objects
-        for obj_idx in range(len(object_ids)):
-            if obj_idx not in used_object_indices:
-                object_id = object_ids[obj_idx]
-                self.disappeared[object_id] += 1
-
-                if self.disappeared[object_id] <= self.max_disappeared:
-                    tracked_objects[object_id] = self.objects[object_id]
-                else:
-                    self.deregister(object_id)
-
-        # Clean up motion detector
-        self.motion_detector.cleanup_stale_candidates(list(self.objects.keys()))
-
-        return tracked_objects
-
+          return tracked_objects
 # Additional classes and modifications for direction tracking
 
 class DirectionManager:
@@ -608,39 +587,39 @@ class DirectionManager:
         Args:
             centroid: (x, y) position
             frame_width: frame width
-            frame_height: frame height  
+            frame_height: frame height
             border_threshold: distance from edge to consider as border entry/exit
         Returns:
             direction string (North/South/East/West)
         """
         x, y = centroid
-        
+
         # Calculate distances to each edge
         dist_to_top = y
         dist_to_bottom = frame_height - y
         dist_to_left = x
         dist_to_right = frame_width - x
-        
+
         # Check if near any border (for entry/exit detection)
         near_top = dist_to_top <= border_threshold
         near_bottom = dist_to_bottom <= border_threshold
         near_left = dist_to_left <= border_threshold
         near_right = dist_to_right <= border_threshold
-        
+
         # If not near any border, determine zone using X-pattern
         if not (near_top or near_bottom or near_left or near_right):
             # Use X-pattern to determine zone
             center_x, center_y = frame_width // 2, frame_height // 2
-            
+
             # Determine which side of each diagonal the point is on
             # Diagonal 1: top-left to bottom-right (y = x * height/width)
             diagonal1_y = (x * frame_height) / frame_width
             above_diagonal1 = y < diagonal1_y
-            
-            # Diagonal 2: top-right to bottom-left (y = height - x * height/width)  
+
+            # Diagonal 2: top-right to bottom-left (y = height - x * height/width)
             diagonal2_y = frame_height - (x * frame_height) / frame_width
             above_diagonal2 = y < diagonal2_y
-            
+
             # Determine zone based on diagonal positions
             if above_diagonal1 and above_diagonal2:
                 zone_index = 0  # North (top)
@@ -650,11 +629,11 @@ class DirectionManager:
                 zone_index = 2  # South (bottom)
             else:  # not above_diagonal1 and above_diagonal2
                 zone_index = 3  # West (left)
-            
+
             # Map zone to current direction
             current_directions = self.get_current_directions()
             return current_directions[zone_index]
-        
+
         # If near border, determine direction based on closest edge
         distances = {
             'top': dist_to_top,
@@ -662,9 +641,9 @@ class DirectionManager:
             'bottom': dist_to_bottom,
             'left': dist_to_left
         }
-        
+
         closest_edge = min(distances.keys(), key=lambda k: distances[k])
-        
+
         # Map edge to current direction
         current_directions = self.get_current_directions()
         edge_to_direction = {
@@ -673,7 +652,7 @@ class DirectionManager:
             'bottom': current_directions[2],  # South
             'left': current_directions[3]     # West
         }
-        
+
         return edge_to_direction[closest_edge]
 
 
@@ -732,7 +711,7 @@ class GPUOptimizedDETRDetector:
         # Initialize tracker and other components
         self.tracker = EnhancedObjectTracker(max_disappeared=1, max_distance=100, iou_threshold=0.3)
         self.timestamp_extractor = TimestampExtractor(roi_height_percent=0.1, roi_width_percent=0.4)
-        self.detection_records = []
+        self.detection_records = {}
 
         # COCO class mapping
         self.target_classes = {
@@ -773,214 +752,130 @@ class GPUOptimizedDETRDetector:
             torch.cuda.empty_cache()
             gc.collect()
 
+
+    def update_detection_record(self, object_id, obj_info, current_zone, timestamp):
+        """Update or create detection record for an object"""
+
+        if object_id not in self.detection_records:
+            # Create new record - origin and destination start the same
+            self.detection_records[object_id] = {
+                'object_id': object_id,
+                'object_type': self.target_classes[obj_info['class_id']],
+                'first_timestamp': timestamp if timestamp else datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'last_timestamp': timestamp if timestamp else datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'origin': current_zone,
+                'destination': current_zone,  # Initially same as origin
+                'zone_history': [current_zone],  # Track zone progression
+                'confirmed_moving': obj_info.get('confirmed_moving', False)
+            }
+            print(f"📝 Created record for ID {object_id} ({self.target_classes[obj_info['class_id']]}) starting in {current_zone}")
+        else:
+            # Update existing record
+            record = self.detection_records[object_id]
+
+            # Update timestamps
+            if timestamp:
+                record['last_timestamp'] = timestamp
+
+            # Update destination if zone changed
+            if current_zone and current_zone != record['destination']:
+                old_destination = record['destination']
+                record['destination'] = current_zone
+                record['zone_history'].append(current_zone)
+
+                print(f"📝 Updated ID {object_id} destination: {record['origin']} → {old_destination} → {current_zone}")
+
+            # Update moving status
+            record['confirmed_moving'] = obj_info.get('confirmed_moving', False)
+
     def get_object_direction_info(self, object_id):
         """Get formatted origin and destination info for an object"""
         if object_id not in self.tracker.object_directions:
             return "Origin: Unknown", "Dest: Unknown"
-        
+
         direction_info = self.tracker.object_directions[object_id]
         origin = direction_info['origin'] if direction_info['origin'] else "Unknown"
         destination = direction_info['destination'] if direction_info['destination'] else "Tracking..."
-        
+
         return f"Origin: {origin}", f"Dest: {destination}"
 
-
-    # def draw_directional_boundaries(self, frame):
-    #     """Draw X-shaped directional boundaries with filled zones showing North/South/East/West regions"""
-    #     height, width = frame.shape[:2]
-        
-    #     # Get current direction mapping
-    #     current_directions = self.tracker.direction_manager.get_current_directions()
-        
-    #     # Define colors for each direction (semi-transparent for zones)
-    #     direction_colors = {
-    #         "North": (0, 255, 255),    # Yellow
-    #         "South": (255, 0, 255),    # Magenta  
-    #         "East": (0, 255, 0),       # Green
-    #         "West": (255, 165, 0)      # Orange
-    #     }
-        
-    #     # Create overlay for semi-transparent zones
-    #     overlay = frame.copy()
-        
-    #     # Define X-pattern boundaries
-    #     # Top-left to bottom-right diagonal
-    #     diagonal1_start = (0, 0)
-    #     diagonal1_end = (width, height)
-        
-    #     # Top-right to bottom-left diagonal  
-    #     diagonal2_start = (width, 0)
-    #     diagonal2_end = (0, height)
-        
-    #     # Create zone masks using X-pattern
-    #     # North zone: above both diagonals (top triangle)
-    #     north_points = np.array([[width//2, 0], [0, 0], [0, height//2], [width//2, height//2]], np.int32)
-    #     north_points2 = np.array([[width//2, 0], [width, 0], [width, height//2], [width//2, height//2]], np.int32)
-        
-    #     # South zone: below both diagonals (bottom triangle)
-    #     south_points = np.array([[width//2, height//2], [0, height//2], [0, height], [width//2, height]], np.int32)
-    #     south_points2 = np.array([[width//2, height//2], [width, height//2], [width, height], [width//2, height]], np.int32)
-        
-    #     # East zone: right of both diagonals (right triangle)
-    #     east_points = np.array([[width//2, 0], [width, 0], [width, height//2]], np.int32)
-    #     east_points2 = np.array([[width//2, height], [width, height//2], [width, height]], np.int32)
-        
-    #     # West zone: left of both diagonals (left triangle)
-    #     west_points = np.array([[0, 0], [width//2, 0], [0, height//2]], np.int32)
-    #     west_points2 = np.array([[0, height//2], [width//2, height], [0, height]], np.int32)
-        
-    #     # Fill zones with semi-transparent colors
-    #     alpha = 0.3  # Transparency level
-        
-    #     # North zone (top)
-    #     cv2.fillPoly(overlay, [north_points], direction_colors[current_directions[0]])
-    #     cv2.fillPoly(overlay, [north_points2], direction_colors[current_directions[0]])
-        
-    #     # South zone (bottom)  
-    #     cv2.fillPoly(overlay, [south_points], direction_colors[current_directions[2]])
-    #     cv2.fillPoly(overlay, [south_points2], direction_colors[current_directions[2]])
-        
-    #     # East zone (right)
-    #     cv2.fillPoly(overlay, [east_points], direction_colors[current_directions[1]])
-    #     cv2.fillPoly(overlay, [east_points2], direction_colors[current_directions[1]])
-        
-    #     # West zone (left)
-    #     cv2.fillPoly(overlay, [west_points], direction_colors[current_directions[3]])
-    #     cv2.fillPoly(overlay, [west_points2], direction_colors[current_directions[3]])
-        
-    #     # Blend overlay with original frame
-    #     cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
-        
-    #     # Draw X-pattern boundary lines (thick lines)
-    #     line_thickness = 4
-        
-    #     # Draw the X
-    #     cv2.line(frame, diagonal1_start, diagonal1_end, (255, 255, 255), line_thickness)
-    #     cv2.line(frame, diagonal2_start, diagonal2_end, (255, 255, 255), line_thickness)
-        
-    #     # Draw border lines for detection zones
-    #     border_thickness = 50
-    #     detection_line_thickness = 2
-        
-    #     # Top detection border
-    #     cv2.line(frame, (0, border_thickness), (width, border_thickness), 
-    #             direction_colors[current_directions[0]], detection_line_thickness)
-        
-    #     # Right detection border
-    #     cv2.line(frame, (width - border_thickness, 0), (width - border_thickness, height), 
-    #             direction_colors[current_directions[1]], detection_line_thickness)
-        
-    #     # Bottom detection border
-    #     cv2.line(frame, (0, height - border_thickness), (width, height - border_thickness), 
-    #             direction_colors[current_directions[2]], detection_line_thickness)
-        
-    #     # Left detection border
-    #     cv2.line(frame, (border_thickness, 0), (border_thickness, height), 
-    #             direction_colors[current_directions[3]], detection_line_thickness)
-        
-    #     # Add direction labels with better positioning
-    #     font_scale = 0.9
-    #     font_thickness = 2
-        
-    #     # Calculate label positions
-    #     # North label (top center)
-    #     north_text = f"NORTH: {current_directions[0]}"
-    #     (text_w, text_h), _ = cv2.getTextSize(north_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)
-    #     cv2.putText(frame, north_text, (width//2 - text_w//2, 35),
-    #               cv2.FONT_HERSHEY_SIMPLEX, font_scale, direction_colors[current_directions[0]], font_thickness)
-        
-    #     # South label (bottom center)
-    #     south_text = f"SOUTH: {current_directions[2]}"
-    #     (text_w, text_h), _ = cv2.getTextSize(south_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)
-    #     cv2.putText(frame, south_text, (width//2 - text_w//2, height - 10),
-    #               cv2.FONT_HERSHEY_SIMPLEX, font_scale, direction_colors[current_directions[2]], font_thickness)
-        
-    #     # East label (right center)
-    #     east_text = f"EAST: {current_directions[1]}"
-    #     cv2.putText(frame, east_text, (width - 180, height//2),
-    #               cv2.FONT_HERSHEY_SIMPLEX, font_scale, direction_colors[current_directions[1]], font_thickness)
-        
-    #     # West label (left center)
-    #     west_text = f"WEST: {current_directions[3]}"
-    #     cv2.putText(frame, west_text, (10, height//2),
-    #               cv2.FONT_HERSHEY_SIMPLEX, font_scale, direction_colors[current_directions[3]], font_thickness)
     def draw_directional_boundaries(self, frame):
         """Draw X-shaped directional boundaries without filled zones"""
         height, width = frame.shape[:2]
-        
+
         # Get current direction mapping
         current_directions = self.tracker.direction_manager.get_current_directions()
-        
+
         # Define colors for direction labels
         direction_colors = {
             "North": (0, 255, 255),    # Yellow
-            "South": (255, 0, 255),    # Magenta  
+            "South": (255, 0, 255),    # Magenta
             "East": (0, 255, 0),       # Green
             "West": (255, 165, 0)      # Orange
         }
-        
+
         # Define X-pattern boundary lines
         # Top-left to bottom-right diagonal
         diagonal1_start = (0, 0)
         diagonal1_end = (width, height)
-        
-        # Top-right to bottom-left diagonal  
+
+        # Top-right to bottom-left diagonal
         diagonal2_start = (width, 0)
         diagonal2_end = (0, height)
-        
+
         # Draw X-pattern boundary lines (thick lines)
         line_thickness = 4
-        
+
         # Draw the X
         cv2.line(frame, diagonal1_start, diagonal1_end, (255, 255, 255), line_thickness)
         cv2.line(frame, diagonal2_start, diagonal2_end, (255, 255, 255), line_thickness)
-        
+
         # Draw border lines for detection zones
         border_thickness = 50
         detection_line_thickness = 2
-        
+
         # Top detection border
-        cv2.line(frame, (0, border_thickness), (width, border_thickness), 
+        cv2.line(frame, (0, border_thickness), (width, border_thickness),
                 direction_colors[current_directions[0]], detection_line_thickness)
-        
+
         # Right detection border
-        cv2.line(frame, (width - border_thickness, 0), (width - border_thickness, height), 
+        cv2.line(frame, (width - border_thickness, 0), (width - border_thickness, height),
                 direction_colors[current_directions[1]], detection_line_thickness)
-        
+
         # Bottom detection border
-        cv2.line(frame, (0, height - border_thickness), (width, height - border_thickness), 
+        cv2.line(frame, (0, height - border_thickness), (width, height - border_thickness),
                 direction_colors[current_directions[2]], detection_line_thickness)
-        
+
         # Left detection border
-        cv2.line(frame, (border_thickness, 0), (border_thickness, height), 
+        cv2.line(frame, (border_thickness, 0), (border_thickness, height),
                 direction_colors[current_directions[3]], detection_line_thickness)
-        
+
         # Add direction labels
         font_scale = 0.9
         font_thickness = 2
-        
+
         # North label (top center)
-        north_text = f"NORTH: {current_directions[0]}"
+        north_text = f"Top: {current_directions[0]}"
         (text_w, text_h), _ = cv2.getTextSize(north_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)
         cv2.putText(frame, north_text, (width//2 - text_w//2, 35),
                   cv2.FONT_HERSHEY_SIMPLEX, font_scale, direction_colors[current_directions[0]], font_thickness)
-        
+
         # South label (bottom center)
-        south_text = f"SOUTH: {current_directions[2]}"
+        south_text = f"Bottom: {current_directions[2]}"
         (text_w, text_h), _ = cv2.getTextSize(south_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)
         cv2.putText(frame, south_text, (width//2 - text_w//2, height - 10),
                   cv2.FONT_HERSHEY_SIMPLEX, font_scale, direction_colors[current_directions[2]], font_thickness)
-        
+
         # East label (right center)
-        east_text = f"EAST: {current_directions[1]}"
+        east_text = f"Right: {current_directions[1]}"
         cv2.putText(frame, east_text, (width - 180, height//2),
                   cv2.FONT_HERSHEY_SIMPLEX, font_scale, direction_colors[current_directions[1]], font_thickness)
-        
+
         # West label (left center)
-        west_text = f"WEST: {current_directions[3]}"
+        west_text = f"Left: {current_directions[3]}"
         cv2.putText(frame, west_text, (10, height//2),
                   cv2.FONT_HERSHEY_SIMPLEX, font_scale, direction_colors[current_directions[3]], font_thickness)
-        
+
 
     def preprocess_frames_batch(self, frames):
         """Preprocess multiple frames for batch processing"""
@@ -1099,35 +994,49 @@ class GPUOptimizedDETRDetector:
         # Update tracker
         tracked_objects = self.tracker.update(detections, self.current_timestamp)
 
-        # Record detections (MODIFIED to include origin/destination)
+        # Update detection records for all tracked objects (confirmed moving or candidates)
         for object_id, obj_info in tracked_objects.items():
-            if obj_info.get('confirmed_moving', False):
-                already_recorded = any(record['object_id'] == object_id for record in self.detection_records)
+            if object_id in self.tracker.object_directions:
+                direction_info = self.tracker.object_directions[object_id]
+                current_centroid = obj_info['centroid']
 
-                if not already_recorded:
-                    timestamp_str = self.current_timestamp_str if self.current_timestamp_str else datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                # Determine current zone
+                current_zone = self.tracker.direction_manager.determine_direction_from_position(
+                    current_centroid, self.tracker.frame_width, self.tracker.frame_height
+                )
 
-                    # Get direction info
-                    origin = None
-                    destination = None
-                    if object_id in self.tracker.object_directions:
-                        direction_info = self.tracker.object_directions[object_id]
-                        origin = direction_info['origin']
-                        destination = direction_info['destination']
-
-                    detection_record = {
-                        'object_id': object_id,
-                        'object_type': self.target_classes[obj_info['class_id']],
-                        'timestamp': timestamp_str,
-                        'origin': origin,
-                        'destination': destination
-                    }
-                    self.detection_records.append(detection_record)
-
-                    origin_text = origin if origin else "Unknown"
-                    print(f"📝 Recorded: ID {object_id} ({self.target_classes[obj_info['class_id']]}) from {origin_text} at {timestamp_str}")
+                if current_zone:
+                    # Update detection record (creates new or updates existing)
+                    self.update_detection_record(
+                        object_id,
+                        obj_info,
+                        current_zone,
+                        self.current_timestamp_str
+                    )
 
         return tracked_objects
+
+
+    def finalize_detection_record(self, object_id):
+        """Finalize detection record when object is deregistered"""
+        if object_id in self.detection_records:
+            record = self.detection_records[object_id]
+
+            # Only keep records for confirmed moving objects
+            if not record.get('confirmed_moving', False):
+                del self.detection_records[object_id]
+                print(f"🗑️ Removed record for non-moving object ID {object_id}")
+            else:
+                # Mark as finalized
+                record['status'] = 'completed'
+
+                # Calculate total journey info
+                zone_changes = len(set(record['zone_history'])) - 1
+                record['zone_changes'] = zone_changes
+                record['final_path'] = f"{record['origin']} → {record['destination']}"
+
+                print(f"✅ Finalized record for ID {object_id}: {record['final_path']} ({zone_changes} zone changes)")
+
 
     def draw_tracked_objects(self, frame, tracked_objects):
         """Draw enhanced annotations (only for moving objects)"""
@@ -1165,14 +1074,14 @@ class GPUOptimizedDETRDetector:
 
             # Enhanced label
             # label = f"ID:{object_id} {self.target_classes[class_id]} {confidence:.2f}{duration_text} [MOVING]"
-            
+
 
             # Get direction information
             origin_text, dest_text = self.get_object_direction_info(object_id)
 
             # Enhanced label with direction info
             label = f"ID:{object_id} {self.target_classes[class_id]} {confidence:.2f}{duration_text}"
-            direction_label = f"{origin_text} -> {dest_text}"
+            direction_label = f"{origin_text} to {dest_text}"
 
             font_scale = 0.6
             thickness = 2
@@ -1379,7 +1288,7 @@ class GPUOptimizedDETRDetector:
 
                 # Commented out cv2.imshow for terminal compatibility
                 if display:
-                    print("####")
+                    print("###")
                     # cv2_imshow(annotated_frame)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         break
@@ -1509,7 +1418,7 @@ class GPUOptimizedDETRDetector:
         print("="*80)
 
     def export_detection_records(self):
-        """Export detection records with origin→destination summary"""
+        """Export detection records with dynamic origin→destination tracking"""
         if not self.detection_records:
             print("\n📊 No detection records to export.")
             return
@@ -1517,72 +1426,47 @@ class GPUOptimizedDETRDetector:
         try:
             import pandas as pd
 
-            # Create DataFrame from detection records
-            df = pd.DataFrame(self.detection_records)
+            # Convert dictionary to list for DataFrame
+            records_list = []
+            for obj_id, record in self.detection_records.items():
+                # Only export confirmed moving objects
+                if record.get('confirmed_moving', False):
+                    export_record = {
+                        'object_id': record['object_id'],
+                        'object_type': record['object_type'],
+                        'first_timestamp': record['first_timestamp'],
+                        'last_timestamp': record['last_timestamp'],
+                        'origin': record['origin'],
+                        'destination': record['destination'],
+                        # 'zone_changes': record.get('zone_changes', 0),
+                        'zone_path': ' -> '.join(record['zone_history']),
+                        # 'status': record.get('status', 'active')
+                    }
+                    records_list.append(export_record)
 
-            # Sort by timestamp
-            df = df.sort_values(['timestamp', 'object_id'])
+            if not records_list:
+                print("\n📊 No confirmed moving objects to export.")
+                return
+
+            # Create DataFrame
+            df = pd.DataFrame(records_list)
+            df = df.sort_values(['first_timestamp', 'object_id'])
 
             # Generate filename
             timestamp_suffix = datetime.now().strftime('%Y%m%d_%H%M%S')
             if self.video_directory and os.path.exists(self.video_directory):
-                csv_filename = os.path.join(self.video_directory, f"object_detections_with_directions_{timestamp_suffix}.csv")
+                csv_filename = os.path.join(self.video_directory, f"vehicle_tracking_dynamic_{timestamp_suffix}.csv")
             else:
-                csv_filename = f"object_detections_with_directions_{timestamp_suffix}.csv"
-
-            # Ensure directory exists
-            os.makedirs(os.path.dirname(csv_filename) if os.path.dirname(csv_filename) else '.', exist_ok=True)
+                csv_filename = f"vehicle_tracking_dynamic_{timestamp_suffix}.csv"
 
             # Export to CSV
             df.to_csv(csv_filename, index=False)
             print(f"\n📊 Detection records exported to: {csv_filename}")
 
-            # NEW: Build origin→destination summary
-            summary_lines = []
-            summary_lines.append("SUMMARY:")
-            summary_lines.append(f"Total detection records:,{len(df)}")
-            summary_lines.append(f"Object types detected:,{', '.join(df['object_type'].unique())}")
-
-            if 'timestamp' in df.columns and len(df) > 0:
-                summary_lines.append(f"Time range:,{df['timestamp'].min()} to {df['timestamp'].max()}")
-
-            summary_lines.append("Detection counts by type:")
-            type_counts = df['object_type'].value_counts()
-            for obj_type, count in type_counts.items():
-                summary_lines.append(f"{obj_type},{count}")
-
-            # NEW: Origin→Destination Summary
-            summary_lines.append("\nORIGIN→DESTINATION SUMMARY:")
-
-            # Filter out rows with unknown origin or destination
-            direction_df = df[(df['origin'].notna()) & (df['destination'].notna()) &
-                            (df['origin'] != 'None') & (df['destination'] != 'None')]
-
-            if len(direction_df) > 0:
-                direction_counts = direction_df.groupby(['origin', 'destination']).size().reset_index(name='count')
-
-                for _, row in direction_counts.iterrows():
-                    origin = row['origin']
-                    destination = row['destination']
-                    count = row['count']
-                    summary_lines.append(f"{origin}->{destination},{count}")
-
-                total_with_directions = len(direction_df)
-                summary_lines.append(f"Total with known directions:,{total_with_directions}")
-            else:
-                summary_lines.append("No complete origin->destination pairs found,0")
-
-            # Append summary to the same CSV
-            with open(csv_filename, "a", encoding="utf-8") as f:
-                f.write("\n\n\n")  # leave blank lines
-                for line in summary_lines:
-                    f.write(line + "\n")
-
-            # Print summary
-            print("\n" + "\n".join(["  • " + l.replace(",", " ") for l in summary_lines[1:]]))
+            # Generate summary
+            self.generate_tracking_summary(df, csv_filename)
 
         except ImportError:
-            print("\n📝 pandas not available, using manual CSV export...")
             self.export_detection_records_manual()
         except Exception as e:
             print(f"\n⚠ CSV export failed: {e}")
@@ -1602,7 +1486,63 @@ class GPUOptimizedDETRDetector:
         """Get current direction mapping"""
         return self.tracker.direction_manager.get_current_mapping()
 
+    def generate_tracking_summary(self, df, csv_filename):
+        """Generate comprehensive tracking summary"""
+        summary_lines = []
+        summary_lines.append("\n\nTRACKING SUMMARY:")
+        summary_lines.append("="*50)
+        summary_lines.append(f"Total moving objects tracked: {len(df)}")
 
+        # Object type summary
+        type_counts = df['object_type'].value_counts()
+        summary_lines.append("\nObject type distribution:")
+        for obj_type, count in type_counts.items():
+            summary_lines.append(f"  {obj_type}: {count}")
+
+        # Origin-Destination flow analysis
+        if 'origin' in df.columns and 'destination' in df.columns:
+            summary_lines.append("\nOrigin to Destination flows:")
+
+            # Group by origin-destination pairs
+            flow_counts = df.groupby(['origin', 'destination']).size().reset_index(name='count')
+            flow_counts = flow_counts.sort_values('count', ascending=False)
+
+            for _, row in flow_counts.iterrows():
+                origin = row['origin']
+                destination = row['destination']
+                count = row['count']
+
+                if origin == destination:
+                    summary_lines.append(f"  {origin} (stayed): {count}")
+                else:
+                    summary_lines.append(f"  {origin} to {destination}: {count}")
+
+        # Zone change analysis
+        # if 'zone_changes' in df.columns:
+        #     avg_zone_changes = df['zone_changes'].mean()
+        #     max_zone_changes = df['zone_changes'].max()
+        #     summary_lines.append(f"\nZone change statistics:")
+        #     summary_lines.append(f"  Average zone changes: {avg_zone_changes:.1f}")
+        #     summary_lines.append(f"  Maximum zone changes: {max_zone_changes}")
+
+            # Objects with most zone changes
+            # complex_journeys = df[df['zone_changes'] > 1].sort_values('zone_changes', ascending=False)
+            # if len(complex_journeys) > 0:
+            #     summary_lines.append(f"  Complex journeys (>1 zone change): {len(complex_journeys)}")
+
+        # Time range analysis
+        if 'first_timestamp' in df.columns and 'last_timestamp' in df.columns:
+            summary_lines.append(f"\nTime range:")
+            summary_lines.append(f" Video start: {df['first_timestamp'].min()}")
+            summary_lines.append(f" Video stop: {df['last_timestamp'].max()}")
+
+        # Append summary to CSV file
+        with open(csv_filename, "a", encoding="utf-8") as f:
+            for line in summary_lines:
+                f.write(line + "\n")
+
+        # Print summary to console
+        print("\n".join(summary_lines))
     def export_detection_records_manual(self):
         """Manual CSV export without pandas"""
         if not self.detection_records:
@@ -1610,22 +1550,96 @@ class GPUOptimizedDETRDetector:
 
         try:
             timestamp_suffix = datetime.now().strftime('%Y%m%d_%H%M%S')
-            csv_filename = os.path.join(self.video_directory, f"object_detections_{timestamp_suffix}.csv")
+            csv_filename = os.path.join(self.video_directory, f"vehicle_tracking_dynamic_{timestamp_suffix}.csv")
+
+            # Filter for confirmed moving objects only
+            moving_records = {k: v for k, v in self.detection_records.items()
+                            if v.get('confirmed_moving', False)}
+
+            if not moving_records:
+                print("\n📊 No confirmed moving objects to export.")
+                return
 
             with open(csv_filename, 'w', newline='') as csvfile:
-                if self.detection_records:
-                    headers = list(self.detection_records[0].keys())
-                    csvfile.write(','.join(headers) + '\n')
+                headers = ['object_id', 'object_type', 'first_timestamp', 'last_timestamp',
+                        'origin', 'destination', 'zone_path']
+                csvfile.write(','.join(headers) + '\n')
 
-                    for record in self.detection_records:
-                        row = [str(record[header]) for header in headers]
-                        csvfile.write(','.join(row) + '\n')
+                for obj_id, record in moving_records.items():
+                    zone_path = ' → '.join(record['zone_history'])
+
+                    row = [
+                        str(record['object_id']),
+                        record['object_type'],
+                        record['first_timestamp'],
+                        record['last_timestamp'],
+                        record['origin'],
+                        record['destination'],
+                        zone_path
+                    ]
+                    csvfile.write(','.join(row) + '\n')
 
             print(f"\n📊 Detection records exported to: {csv_filename}")
-            print(f"  • Total records: {len(self.detection_records)}")
+            print(f"  • Total records: {len(moving_records)}")
+            
+            # Generate summary directly without class
+            self.generate_tracking_summary_manual(moving_records, csv_filename)
 
         except Exception as e:
             print(f"\n⚠ Manual CSV export failed: {e}")
+
+    def generate_tracking_summary_manual(self, moving_records, csv_filename):
+        """Generate comprehensive tracking summary for manual export"""
+        summary_lines = []
+        summary_lines.append("\n\nTRACKING SUMMARY:")
+        summary_lines.append("="*50)
+        summary_lines.append(f"Total moving objects tracked: {len(moving_records)}")
+
+        # Object type summary
+        type_counts = {}
+        for record in moving_records.values():
+            obj_type = record['object_type']
+            type_counts[obj_type] = type_counts.get(obj_type, 0) + 1
+        
+        summary_lines.append("\nObject type distribution:")
+        for obj_type, count in sorted(type_counts.items(), key=lambda x: x[1], reverse=True):
+            summary_lines.append(f"  {obj_type}: {count}")
+
+        # Origin-Destination flow analysis
+        summary_lines.append("\nOrigin to Destination flows:")
+        
+        # Group by origin-destination pairs manually
+        flow_counts = {}
+        for record in moving_records.values():
+            origin = record['origin']
+            destination = record['destination']
+            key = (origin, destination)
+            flow_counts[key] = flow_counts.get(key, 0) + 1
+        
+        # Sort by count (descending)
+        sorted_flows = sorted(flow_counts.items(), key=lambda x: x[1], reverse=True)
+        
+        for (origin, destination), count in sorted_flows:
+            if origin == destination:
+                summary_lines.append(f"  {origin} (stayed): {count}")
+            else:
+                summary_lines.append(f"  {origin} to {destination}: {count}")
+
+        # Time range analysis
+        first_timestamps = [record['first_timestamp'] for record in moving_records.values()]
+        last_timestamps = [record['last_timestamp'] for record in moving_records.values()]
+        
+        summary_lines.append(f"\nTime range:")
+        summary_lines.append(f" Video start: {min(first_timestamps)}")
+        summary_lines.append(f" Video stop: {max(last_timestamps)}")
+
+        # Append summary to CSV file
+        with open(csv_filename, "a", encoding="utf-8") as f:
+            for line in summary_lines:
+                f.write(line + "\n")
+
+        # Print summary to console
+        print("\n".join(summary_lines))
 
     def export_duration_data(self):
         """Export duration data to CSV"""
@@ -1691,7 +1705,6 @@ class GPUOptimizedDETRDetector:
         except Exception as e:
             print(f"\n⚠ Manual duration CSV export failed: {e}")
 
-# Add this import at the top of your detr_motion.py file (after existing imports)
 import argparse
 
 # Modify the main() function to accept command line arguments
@@ -1739,7 +1752,7 @@ def main():
             output_path=output_path,
             display=False,  # Set to False for terminal usage
             target_fps=10,  # Adjusted for better performance
-            save_preview_frames=True,  # Save preview frames instead of displaying
+            save_preview_frames=False,  # Save preview frames instead of displaying
             preview_interval=25  # Save every 25th frame as preview
         )
     except FileNotFoundError:
