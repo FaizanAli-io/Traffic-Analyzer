@@ -1,21 +1,22 @@
-import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
 import "./Dashboard.css";
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 
 const API_BASE = import.meta.env.VITE_BACKEND_SERVER || "http://localhost:5000";
 
-export default function Dashboard({ onLogout }) {  // Accept onLogout prop
+export default function Dashboard({ onLogout }) {
+  // Accept onLogout prop
   const navigate = useNavigate();
-  
+
   // Get user info from localStorage
   const getUserInfo = () => {
     try {
-      const userSession = localStorage.getItem('userSession');
+      const userSession = localStorage.getItem("userSession");
       if (userSession) {
         return JSON.parse(userSession);
       }
     } catch (error) {
-      console.error('Error parsing user session:', error);
+      console.error("Error parsing user session:", error);
     }
     return null;
   };
@@ -24,13 +25,13 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
 
   // Updated logout function
   const handleLogout = () => {
-    localStorage.removeItem('userSession');
+    localStorage.removeItem("userSession");
     // Call the parent's logout handler to update App state
     if (onLogout) {
       onLogout();
     }
     // Navigate to login - this will now work properly since App state is updated
-    navigate('/login');
+    navigate("/login");
   };
 
   // ---------- Existing state variables ----------
@@ -71,7 +72,7 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
     top: "North",
     right: "East",
     bottom: "South",
-    left: "West",
+    left: "West"
   });
   const [isRotating, setIsRotating] = useState(false);
   const [directionMsg, setDirectionMsg] = useState("");
@@ -103,7 +104,7 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
       const resp = await fetch(`${API_BASE}/lambda/terminate-by-id`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instance_id: instanceId }),
+        body: JSON.stringify({ instance_id: instanceId })
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || data.status !== "ok") {
@@ -127,7 +128,7 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
       const resp = await fetch(`${API_BASE}/lambda/set-direction-orientation`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "get_current" }),
+        body: JSON.stringify({ action: "get_current" })
       });
       const data = await resp.json().catch(() => ({}));
       if (resp.ok && data.status === "ok") setDirectionMapping(data.mapping);
@@ -150,7 +151,7 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
       const resp = await fetch(`${API_BASE}/lambda/set-direction-orientation`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "rotate_clockwise" }),
+        body: JSON.stringify({ action: "rotate_clockwise" })
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || data.status !== "ok") {
@@ -174,7 +175,7 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
       const resp = await fetch(`${API_BASE}/lambda/set-direction-orientation`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "rotate_counterclockwise" }),
+        body: JSON.stringify({ action: "rotate_counterclockwise" })
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || data.status !== "ok") {
@@ -197,7 +198,7 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
     try {
       const resp = await fetch(`${API_BASE}/lambda/launch-and-setup`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json" }
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || data.status !== "ready") {
@@ -221,7 +222,7 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
     try {
       const resp = await fetch(`${API_BASE}/lambda/terminate-instance`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json" }
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || data.status !== "ok") {
@@ -291,7 +292,7 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
       const resp = await fetch(`${API_BASE}/lambda/upload-video-and-run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify(body)
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || (data.status && data.status !== "ok")) {
@@ -307,12 +308,13 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
     }
   };
 
-  const downloadFiles = async () => {
+  const downloadFiles = async (type = "both") => {
     setIsDownloading(true);
     setDownloadErr("");
     try {
       const params = new URLSearchParams();
       if (ip) params.set("ip", ip);
+      params.set("type", type);
       const resp = await fetch(`${API_BASE}/lambda/download-output?${params.toString()}`);
       if (!resp.ok) {
         const maybeJson = await resp.json().catch(() => ({}));
@@ -322,7 +324,14 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "outputs_bundle.zip";
+      // Set the filename based on the type
+      if (type === "video") {
+        a.download = "output_detr_motion_filtered.mp4";
+      } else if (type === "csv") {
+        a.download = "traffic_analysis.csv";
+      } else {
+        a.download = "outputs_bundle.zip";
+      }
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -337,30 +346,34 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
   return (
     <div className="dashboard-main-container">
       {/* ---------- User Header with Logout ---------- */}
-      <div className="dashboard-user-header" style={{ 
-        display: 'flex', 
-        justifyContent: 'space-between', 
-        alignItems: 'center', 
-        padding: '16px', 
-        backgroundColor: '#f8f9fa', 
-        borderRadius: '8px', 
-        marginBottom: '16px' 
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span style={{ fontSize: '20px' }}>👤</span>
+      <div
+        className="dashboard-user-header"
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          padding: "16px",
+          backgroundColor: "#f8f9fa",
+          borderRadius: "8px",
+          marginBottom: "16px"
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <span style={{ fontSize: "20px" }}>👤</span>
           <div>
-            <div style={{ fontWeight: 'bold', fontSize: '16px' }}>
-              Welcome, {userInfo?.username || 'User'}
+            <div style={{ fontWeight: "bold", fontSize: "16px" }}>
+              Welcome, {userInfo?.username || "User"}
             </div>
-            <div style={{ fontSize: '12px', color: '#666' }}>
-              Logged in: {userInfo?.loginTime ? new Date(userInfo.loginTime).toLocaleString() : 'Unknown'}
+            <div style={{ fontSize: "12px", color: "#666" }}>
+              Logged in:{" "}
+              {userInfo?.loginTime ? new Date(userInfo.loginTime).toLocaleString() : "Unknown"}
             </div>
           </div>
         </div>
-        <button 
+        <button
           onClick={handleLogout}
           className="dashboard-btn dashboard-btn-danger"
-          style={{ fontSize: '14px', padding: '8px 16px' }}
+          style={{ fontSize: "14px", padding: "8px 16px" }}
         >
           Logout
         </button>
@@ -368,7 +381,10 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
 
       {/* ---------- Running Instances panel ---------- */}
       <div className="dashboard-card" style={{ marginBottom: 16 }}>
-        <div className="dashboard-card-title" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div
+          className="dashboard-card-title"
+          style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
+        >
           <div>
             <span className="dashboard-card-icon">📡</span>
             Running Instances
@@ -376,7 +392,9 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
           <button
             onClick={loadInstances}
             disabled={isLoadingInstances}
-            className={`dashboard-btn dashboard-btn-secondary ${isLoadingInstances ? "dashboard-loading" : ""}`}
+            className={`dashboard-btn dashboard-btn-secondary ${
+              isLoadingInstances ? "dashboard-loading" : ""
+            }`}
           >
             {isLoadingInstances && <div className="dashboard-spinner"></div>}
             Refresh
@@ -414,7 +432,9 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
                   const busy = terminatingIds.has(i.id);
                   return (
                     <tr key={i.id}>
-                      <td><code>{i.id}</code></td>
+                      <td>
+                        <code>{i.id}</code>
+                      </td>
                       <td>{i.name || "-"}</td>
                       <td>{i.status}</td>
                       <td>{i.ip || "-"}</td>
@@ -425,7 +445,9 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
                         <button
                           onClick={() => terminateById(i.id)}
                           disabled={busy}
-                          className={`dashboard-btn dashboard-btn-danger ${busy ? "dashboard-loading" : ""}`}
+                          className={`dashboard-btn dashboard-btn-danger ${
+                            busy ? "dashboard-loading" : ""
+                          }`}
                           title="Terminate this instance"
                         >
                           {busy && <div className="dashboard-spinner"></div>}
@@ -462,7 +484,9 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
             <button
               onClick={startGpu}
               disabled={isLaunching}
-              className={`dashboard-btn dashboard-btn-primary ${isLaunching ? "dashboard-loading" : ""}`}
+              className={`dashboard-btn dashboard-btn-primary ${
+                isLaunching ? "dashboard-loading" : ""
+              }`}
             >
               {isLaunching && <div className="dashboard-spinner"></div>}
               {isLaunching ? "Launching…" : "Start GPU"}
@@ -470,7 +494,9 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
             <button
               onClick={terminateInstance}
               disabled={isTerminating}
-              className={`dashboard-btn dashboard-btn-danger ${isTerminating ? "dashboard-loading" : ""}`}
+              className={`dashboard-btn dashboard-btn-danger ${
+                isTerminating ? "dashboard-loading" : ""
+              }`}
             >
               {isTerminating && <div className="dashboard-spinner"></div>}
               {isTerminating ? "Terminating…" : "Terminate Instance"}
@@ -535,14 +561,18 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
               <div className="dashboard-file-preview">
                 <div className="dashboard-file-info">
                   <span className="dashboard-file-name">{file.name}</span>
-                  <span className="dashboard-file-size">{(file.size / 1024 / 1024).toFixed(2)} MB</span>
+                  <span className="dashboard-file-size">
+                    {(file.size / 1024 / 1024).toFixed(2)} MB
+                  </span>
                 </div>
               </div>
             )}
             <button
               onClick={uploadVideo}
               disabled={!file || isUploading}
-              className={`dashboard-btn dashboard-btn-secondary ${(!file || isUploading) ? "dashboard-disabled" : ""} ${isUploading ? "dashboard-loading" : ""}`}
+              className={`dashboard-btn dashboard-btn-secondary ${
+                !file || isUploading ? "dashboard-disabled" : ""
+              } ${isUploading ? "dashboard-loading" : ""}`}
             >
               {isUploading && <div className="dashboard-spinner"></div>}
               {isUploading ? "Uploading…" : "Upload Video"}
@@ -582,7 +612,9 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
               <button
                 onClick={rotateDirectionClockwise}
                 disabled={isRotating}
-                className={`dashboard-btn dashboard-btn-secondary ${isRotating ? "dashboard-loading" : ""}`}
+                className={`dashboard-btn dashboard-btn-secondary ${
+                  isRotating ? "dashboard-loading" : ""
+                }`}
               >
                 {isRotating && <div className="dashboard-spinner"></div>}
                 Rotate Clockwise ↻
@@ -590,7 +622,9 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
               <button
                 onClick={rotateDirectionCounterclockwise}
                 disabled={isRotating}
-                className={`dashboard-btn dashboard-btn-secondary ${isRotating ? "dashboard-loading" : ""}`}
+                className={`dashboard-btn dashboard-btn-secondary ${
+                  isRotating ? "dashboard-loading" : ""
+                }`}
               >
                 {isRotating && <div className="dashboard-spinner"></div>}
                 Rotate Counter ↺
@@ -623,13 +657,16 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
           </h2>
           <div className="dashboard-process-area">
             <p className="dashboard-process-description">
-              Process your uploaded video using GPU acceleration. This operation may take several minutes.
+              Process your uploaded video using GPU acceleration. This operation may take several
+              minutes.
             </p>
             <button
               onClick={processVideo}
               disabled={isProcessing || !uploadedFilename}
               title={!uploadedFilename ? "Upload a video first" : ""}
-              className={`dashboard-btn dashboard-btn-accent ${(isProcessing || !uploadedFilename) ? "dashboard-disabled" : ""} ${isProcessing ? "dashboard-loading" : ""}`}
+              className={`dashboard-btn dashboard-btn-accent ${
+                isProcessing || !uploadedFilename ? "dashboard-disabled" : ""
+              } ${isProcessing ? "dashboard-loading" : ""}`}
             >
               {isProcessing && <div className="dashboard-spinner"></div>}
               {isProcessing ? "Processing…" : "Process Video"}
@@ -658,16 +695,41 @@ export default function Dashboard({ onLogout }) {  // Accept onLogout prop
           </h2>
           <div className="dashboard-download-area">
             <p className="dashboard-download-description">
-              Download a ZIP file containing both the processed video and CSV data with analysis results.
+              Download your processed results. You can download the video and CSV separately or get
+              both in a ZIP file.
             </p>
-            <button
-              onClick={downloadFiles}
-              disabled={isDownloading}
-              className={`dashboard-btn dashboard-btn-success ${isDownloading ? "dashboard-loading" : ""}`}
-            >
-              {isDownloading && <div className="dashboard-spinner"></div>}
-              {isDownloading ? "Downloading…" : "Download ZIP (Video + CSV)"}
-            </button>
+            <div className="dashboard-button-group">
+              <button
+                onClick={() => downloadFiles("video")}
+                disabled={isDownloading}
+                className={`dashboard-btn dashboard-btn-success ${
+                  isDownloading ? "dashboard-loading" : ""
+                }`}
+              >
+                {isDownloading && <div className="dashboard-spinner"></div>}
+                {isDownloading ? "Downloading…" : "Download Video"}
+              </button>
+              <button
+                onClick={() => downloadFiles("csv")}
+                disabled={isDownloading}
+                className={`dashboard-btn dashboard-btn-success ${
+                  isDownloading ? "dashboard-loading" : ""
+                }`}
+              >
+                {isDownloading && <div className="dashboard-spinner"></div>}
+                {isDownloading ? "Downloading…" : "Download CSV"}
+              </button>
+              <button
+                onClick={() => downloadFiles("both")}
+                disabled={isDownloading}
+                className={`dashboard-btn dashboard-btn-secondary ${
+                  isDownloading ? "dashboard-loading" : ""
+                }`}
+              >
+                {isDownloading && <div className="dashboard-spinner"></div>}
+                {isDownloading ? "Downloading…" : "Download All (ZIP)"}
+              </button>
+            </div>
           </div>
           <div className="dashboard-status-area">
             {downloadErr && (

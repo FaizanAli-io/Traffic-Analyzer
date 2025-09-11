@@ -1,21 +1,21 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import './Login.css';
+import "./Login.css";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 const API_BASE = import.meta.env.VITE_BACKEND_SERVER;
 
 function Login({ onLogin }) {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
   const [errors, setErrors] = useState({});
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
   const navigate = useNavigate();
 
   const validateForm = () => {
     const newErrors = {};
-    if (!username) newErrors.username = 'Username is required';
-    if (!password) newErrors.password = 'Password is required';
+    if (!username) newErrors.username = "Username is required";
+    if (!password) newErrors.password = "Password is required";
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -28,8 +28,8 @@ function Login({ onLogin }) {
 
     try {
       const resp = await fetch(`${API_BASE}/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password })
       });
 
@@ -42,10 +42,10 @@ function Login({ onLogin }) {
           username: username,
           loginTime: new Date().toISOString()
         };
-        localStorage.setItem('userSession', JSON.stringify(userSession));
-        
+        localStorage.setItem("userSession", JSON.stringify(userSession));
+
         onLogin?.(); // optional callback
-        navigate('/dashboard'); // redirect after successful login
+        navigate("/dashboard"); // redirect after successful login
       } else {
         setErrors({
           general: data?.error || `Login failed (status ${resp.status})`
@@ -59,7 +59,7 @@ function Login({ onLogin }) {
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter') handleSubmit(e);
+    if (e.key === "Enter") handleSubmit(e);
   };
 
   return (
@@ -96,12 +96,10 @@ function Login({ onLogin }) {
             {errors.password && <p className="login-error">{errors.password}</p>}
           </div>
 
-          {errors.general && (
-            <p className="login-error login-general-error">{errors.general}</p>
-          )}
+          {errors.general && <p className="login-error login-general-error">{errors.general}</p>}
 
           <button type="submit" disabled={isLoading} className="login-button">
-            {isLoading ? 'Logging in...' : 'Login'}
+            {isLoading ? "Logging in..." : "Login"}
           </button>
         </form>
       </div>

@@ -1,14 +1,15 @@
 import os
-import requests
 import time
 import socket
 import paramiko
+import requests
 from scp import SCPClient
-from flask import Flask, jsonify, request, send_file
-from dotenv import load_dotenv
 from flask_cors import CORS
+from dotenv import load_dotenv
+from flask import Flask, jsonify, request, send_file
 
 import tempfile, zipfile, os
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -16,14 +17,14 @@ load_dotenv()
 LAMBDA_API_KEY = os.getenv("LAMBDA_API_KEY")
 LAMBDA_BASE_URL = "https://cloud.lambdalabs.com/api/v1"
 
-INSTANCE_TYPE_NAME = "gpu_1x_gh200"
 REGION_NAME = "us-east-3"
 SSH_KEY_NAMES = ["Desktop-Pc"]
 INSTANCE_NAME = "traffic-analysis"
+INSTANCE_TYPE_NAME = "gpu_1x_gh200"
 FIREWALL_RULESETS = [{"id": "7093760c5d4e4df2bf8584ae791526c4"}]
 
 # SSH config (update with your key and username)
-SSH_USERNAME = "ubuntu"   # usually "ubuntu"
+SSH_USERNAME = "ubuntu"  # usually "ubuntu"
 SSH_KEY_PATH = os.getenv("SSH_KEY_PATH")
 
 # Directory configuration
@@ -50,7 +51,7 @@ REMOTE_VIDEO_NAME = "input_video_4.mp4"
 RUN_AFTER_SETUP = False
 
 
-FIXED_VIDEO_BASENAME = "input_video_4.mp4" 
+FIXED_VIDEO_BASENAME = "input_video_4.mp4"
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -61,6 +62,7 @@ CORS(app)
 # INSTANCE INFO MANAGEMENT
 # ===============================
 
+
 def save_instance_info(instance_id, ip):
     """Save instance ID and IP to a text file."""
     try:
@@ -69,6 +71,7 @@ def save_instance_info(instance_id, ip):
             f.write(f"ip={ip}\n")
     except Exception as e:
         print(f"Warning: Could not save instance info to {INSTANCE_INFO_FILE}: {e}")
+
 
 def load_instance_info():
     """Load instance ID and IP from text file. Returns (instance_id, ip) or (None, None)."""
@@ -86,6 +89,7 @@ def load_instance_info():
         print(f"Warning: Could not load instance info from {INSTANCE_INFO_FILE}: {e}")
     return None, None
 
+
 def get_saved_ip():
     """Get the saved IP from instance info file."""
     _, ip = load_instance_info()
@@ -96,32 +100,45 @@ def get_saved_ip():
 # LAMBDA CLOUD API HELPERS
 # ===============================
 
+
 def cloud_get(path: str):
     """Make GET request to Lambda Cloud API."""
     if not LAMBDA_API_KEY:
-        return type('MockResponse', (), {
-            'ok': False,
-            'status_code': 401,
-            'text': '{"error": "No API key provided"}',
-            'json': lambda: {"error": "No API key provided"}
-        })()
+        return type(
+            "MockResponse",
+            (),
+            {
+                "ok": False,
+                "status_code": 401,
+                "text": '{"error": "No API key provided"}',
+                "json": lambda: {"error": "No API key provided"},
+            },
+        )()
     headers = {"Authorization": f"Bearer {LAMBDA_API_KEY}"}
     return requests.get(f"{LAMBDA_BASE_URL}{path}", headers=headers, timeout=30)
+
 
 def cloud_post(path: str, body: dict):
     """Make POST request to Lambda Cloud API."""
     if not LAMBDA_API_KEY:
-        return type('MockResponse', (), {
-            'ok': False,
-            'status_code': 401,
-            'text': '{"error": "No API key provided"}',
-            'json': lambda: {"error": "No API key provided"}
-        })()
+        return type(
+            "MockResponse",
+            (),
+            {
+                "ok": False,
+                "status_code": 401,
+                "text": '{"error": "No API key provided"}',
+                "json": lambda: {"error": "No API key provided"},
+            },
+        )()
     headers = {
         "Authorization": f"Bearer {LAMBDA_API_KEY}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
-    return requests.post(f"{LAMBDA_BASE_URL}{path}", headers=headers, json=body, timeout=30)
+    return requests.post(
+        f"{LAMBDA_BASE_URL}{path}", headers=headers, json=body, timeout=30
+    )
+
 
 def extract_instance_id(launch_json):
     """
@@ -148,6 +165,7 @@ def extract_instance_id(launch_json):
         return data.get("id")
 
     return None
+
 
 def wait_for_instance_ip(instance_id: str, timeout: int = 600, interval: int = 5):
     """
@@ -202,12 +220,14 @@ def wait_for_instance_ip(instance_id: str, timeout: int = 600, interval: int = 5
 # SSH CONNECTION HELPERS
 # ===============================
 
+
 def _ssh_key():
     """Load SSH private key (try RSA first, then Ed25519)."""
     try:
         return paramiko.RSAKey.from_private_key_file(SSH_KEY_PATH)
     except Exception:
         return paramiko.Ed25519Key.from_private_key_file(SSH_KEY_PATH)
+
 
 def _mk_ssh(ip):
     """Create SSH and SCP connections."""
@@ -218,6 +238,7 @@ def _mk_ssh(ip):
     scp = SCPClient(ssh.get_transport())
     return ssh, scp
 
+
 def _sh(ssh, cmd):
     """Run a bash command and return (code, out, err)."""
     cmd = f"bash -lc '{cmd}'"
@@ -226,6 +247,7 @@ def _sh(ssh, cmd):
     err = stderr.read().decode("utf-8", "ignore")
     code = stdout.channel.recv_exit_status()
     return code, out, err
+
 
 def wait_for_ssh(ip, port=22, timeout=300):
     """Wait until instance SSH port is reachable."""
@@ -243,6 +265,7 @@ def wait_for_ssh(ip, port=22, timeout=300):
 # REMOTE INSTANCE SETUP
 # ===============================
 
+
 def create_remote_folder(ip, folder="/home/ubuntu/myjob"):
     """Connect to instance via SSH and create a folder."""
     key = _ssh_key()
@@ -254,15 +277,23 @@ def create_remote_folder(ip, folder="/home/ubuntu/myjob"):
     ssh.close()
     return folder
 
+
 def bootstrap_system_and_venv(ssh):
     """Install system dependencies and create Python virtual environment."""
     # System deps
     _sh(ssh, "sudo apt-get update -y")
-    _sh(ssh, "sudo apt-get install -y --no-install-recommends python3-venv python3-pip tesseract-ocr libtesseract-dev ffmpeg")
+    _sh(
+        ssh,
+        "sudo apt-get install -y --no-install-recommends python3-venv python3-pip tesseract-ocr libtesseract-dev ffmpeg",
+    )
     # Project dir + venv
     _sh(ssh, f"mkdir -p {REMOTE_DIR}")
     _sh(ssh, f"python3 -m venv {REMOTE_VENV}")
-    _sh(ssh, f"source {REMOTE_VENV}/bin/activate && pip install --upgrade pip setuptools wheel")
+    _sh(
+        ssh,
+        f"source {REMOTE_VENV}/bin/activate && pip install --upgrade pip setuptools wheel",
+    )
+
 
 def upload_code_and_requirements_from_cwd(ssh, scp):
     """Upload ./detr_motion.py and ./remote-requirements.txt from current working dir."""
@@ -271,7 +302,9 @@ def upload_code_and_requirements_from_cwd(ssh, scp):
     local_req = os.path.join(cwd, "remote-requirements.txt")
 
     if not os.path.exists(local_script):
-        raise FileNotFoundError(f"Expected file not found in current dir: {local_script}")
+        raise FileNotFoundError(
+            f"Expected file not found in current dir: {local_script}"
+        )
     if not os.path.exists(local_req):
         raise FileNotFoundError(f"Expected file not found in current dir: {local_req}")
 
@@ -279,15 +312,23 @@ def upload_code_and_requirements_from_cwd(ssh, scp):
     scp.put(local_script, f"{REMOTE_DIR}/{REMOTE_SCRIPT_NAME}")
     scp.put(local_req, f"{REMOTE_DIR}/{REMOTE_REQ_NAME}")
 
+
 def pip_install_requirements(ssh):
     """Install Python requirements in the virtual environment."""
-    code, out, err = _sh(ssh, f"source {REMOTE_VENV}/bin/activate && cd {REMOTE_DIR} && pip install -r {REMOTE_REQ_NAME}")
+    code, out, err = _sh(
+        ssh,
+        f"source {REMOTE_VENV}/bin/activate && cd {REMOTE_DIR} && pip install -r {REMOTE_REQ_NAME}",
+    )
     if code != 0:
         raise RuntimeError(f"pip install -r failed\nSTDOUT:\n{out}\nSTDERR:\n{err}")
 
+
 def run_script(ssh):
     """Run the main script in the virtual environment."""
-    code, out, err = _sh(ssh, f"cd {REMOTE_DIR} && source {REMOTE_VENV}/bin/activate && python {REMOTE_SCRIPT_NAME}")
+    code, out, err = _sh(
+        ssh,
+        f"cd {REMOTE_DIR} && source {REMOTE_VENV}/bin/activate && python {REMOTE_SCRIPT_NAME}",
+    )
     if code != 0:
         raise RuntimeError(f"Script failed\nSTDOUT:\n{out}\nSTDERR:\n{err}")
     return out
@@ -296,6 +337,7 @@ def run_script(ssh):
 # ===============================
 # FILE MANAGEMENT HELPERS
 # ===============================
+
 
 def _pick_local_video(video_filename: str | None):
     """
@@ -320,9 +362,12 @@ def _pick_local_video(video_filename: str | None):
 
     raise FileNotFoundError(f"No .mp4 files found in {INPUT_VIDEO_DIR}")
 
-def replace_remote_file(ip: str | None = None,
-                        local_script: str | None = None,
-                        remote_script: str | None = None):
+
+def replace_remote_file(
+    ip: str | None = None,
+    local_script: str | None = None,
+    remote_script: str | None = None,
+):
     """Replace a file on the remote instance."""
     target_ip = ip or get_saved_ip()
     if not target_ip:
@@ -355,13 +400,18 @@ def replace_remote_file(ip: str | None = None,
             "status": "ok",
             "ip": target_ip,
             "remote_path": remote_path,
-            "note": "File replaced successfully."
+            "note": "File replaced successfully.",
         }
     finally:
-        try: scp.close()
-        except Exception: pass
-        try: ssh.close()
-        except Exception: pass
+        try:
+            scp.close()
+        except Exception:
+            pass
+        try:
+            ssh.close()
+        except Exception:
+            pass
+
 
 def pull_remote_file(ip: str | None, remote_filename: str) -> str:
     """SCP a file from REMOTE_DIR on the instance to local DOWNLOADS_DIR."""
@@ -384,10 +434,14 @@ def pull_remote_file(ip: str | None, remote_filename: str) -> str:
         scp.get(remote_path, local_path)
         return local_path
     finally:
-        try: scp.close()
-        except Exception: pass
-        try: ssh.close()
-        except Exception: pass
+        try:
+            scp.close()
+        except Exception:
+            pass
+        try:
+            ssh.close()
+        except Exception:
+            pass
 
 
 # ===============================
@@ -404,7 +458,7 @@ def cleanup_remote_files(ssh):
         # Delete all MP4 files
         code, out, err = _sh(ssh, f"find {REMOTE_DIR} -name '*.mp4' -type f -delete")
         if code == 0:
-            mp4_count = out.strip().count('\n') if out.strip() else 0
+            mp4_count = out.strip().count("\n") if out.strip() else 0
             print(f"Cleaned up MP4 files from remote directory")
         else:
             print(f"Warning: Could not clean MP4 files: {err}")
@@ -412,7 +466,7 @@ def cleanup_remote_files(ssh):
         # Delete all CSV files
         code, out, err = _sh(ssh, f"find {REMOTE_DIR} -name '*.csv' -type f -delete")
         if code == 0:
-            csv_count = out.strip().count('\n') if out.strip() else 0
+            csv_count = out.strip().count("\n") if out.strip() else 0
             print(f"Cleaned up CSV files from remote directory")
         else:
             print(f"Warning: Could not clean CSV files: {err}")
@@ -427,6 +481,7 @@ def cleanup_remote_files(ssh):
         print(f"Warning: Error during cleanup: {e}")
         return False
 
+
 def upload_video_and_run(ip: str | None = None, video_filename: str | None = None):
     """
     Upload a video from ./input-video to the remote working folder and run detr_motion.py.
@@ -435,7 +490,9 @@ def upload_video_and_run(ip: str | None = None, video_filename: str | None = Non
     """
     target_ip = ip or get_saved_ip()
     if not target_ip:
-        raise ValueError("No IP provided. Pass ip in the request body or launch an instance first.")
+        raise ValueError(
+            "No IP provided. Pass ip in the request body or launch an instance first."
+        )
 
     # 0) pick local video
     local_path, chosen_name = _pick_local_video(video_filename)
@@ -472,14 +529,14 @@ def upload_video_and_run(ip: str | None = None, video_filename: str | None = Non
         remote_log = f"{REMOTE_DIR}/detr_motion.log"
 
         # Get current direction orientation
-        direction_orientation = getattr(app, 'direction_orientation', 0)
+        direction_orientation = getattr(app, "direction_orientation", 0)
 
         cmd = (
             f"cd {REMOTE_DIR} && "
             f"source {REMOTE_VENV}/bin/activate && "
             f"pip install --no-cache-dir -r {REMOTE_REQ_NAME} && "
             f"python {REMOTE_SCRIPT_NAME} --direction-orientation {direction_orientation} "
-            f"> {remote_log} 2>&1"   # redirect both stdout and stderr to file
+            f"> {remote_log} 2>&1"  # redirect both stdout and stderr to file
         )
 
         code, out, err = _sh(ssh, cmd)
@@ -505,7 +562,7 @@ def upload_video_and_run(ip: str | None = None, video_filename: str | None = Non
             "log_file": remote_log,
             "stdout_tail": tail_out,
             "cleanup_performed": cleanup_success,
-            "message": "Previous files cleaned up and new video processed successfully"
+            "message": "Previous files cleaned up and new video processed successfully",
         }
 
     finally:
@@ -519,10 +576,10 @@ def upload_video_and_run(ip: str | None = None, video_filename: str | None = Non
             pass
 
 
-
 # ===============================
 # FLASK ROUTES - AUTHENTICATION
 # ===============================
+
 
 @app.post("/login")
 def auth_login():
@@ -536,7 +593,10 @@ def auth_login():
     password = data.get("password", "")
 
     if not username or not password:
-        return jsonify({"success": False, "error": "username and password required"}), 400
+        return (
+            jsonify({"success": False, "error": "username and password required"}),
+            400,
+        )
 
     if username == ENV_USERNAME and password == ENV_PASSWORD:
         return jsonify({"success": True, "message": "login ok"}), 200
@@ -548,18 +608,22 @@ def auth_login():
 # FLASK ROUTES - HEALTH & INFO
 # ===============================
 
+
 @app.get("/health")
 def health():
     """Health check endpoint."""
     api_key_status = "SET" if LAMBDA_API_KEY else "NOT SET"
     api_key_preview = f"{LAMBDA_API_KEY[:8]}..." if LAMBDA_API_KEY else "None"
 
-    return jsonify({
-        "status": "ok",
-        "service": "lambda-min-api",
-        "api_key_status": api_key_status,
-        "api_key_preview": api_key_preview
-    })
+    return jsonify(
+        {
+            "status": "ok",
+            "service": "lambda-min-api",
+            "api_key_status": api_key_status,
+            "api_key_preview": api_key_preview,
+        }
+    )
+
 
 @app.get("/lambda/firewall-rulesets")
 def list_firewall_rulesets():
@@ -569,6 +633,7 @@ def list_firewall_rulesets():
     """
     r = cloud_get("/firewall-rulesets")
     return (r.text, r.status_code, {"Content-Type": "application/json"})
+
 
 @app.get("/lambda/instance-types")
 def list_instance_types():
@@ -581,6 +646,7 @@ def list_instance_types():
 # FLASK ROUTES - INSTANCE MANAGEMENT
 # ===============================
 
+
 @app.post("/lambda/launch-and-setup")
 def launch_and_setup():
     """
@@ -589,21 +655,35 @@ def launch_and_setup():
     """
     # 1) Launch instance
     body = {
-        "region_name": REGION_NAME,
-        "instance_type_name": INSTANCE_TYPE_NAME,
-        "ssh_key_names": SSH_KEY_NAMES,
         "name": INSTANCE_NAME,
-        "firewall_rulesets": FIREWALL_RULESETS
+        "region_name": REGION_NAME,
+        "ssh_key_names": SSH_KEY_NAMES,
+        "firewall_rulesets": FIREWALL_RULESETS,
+        "instance_type_name": INSTANCE_TYPE_NAME,
     }
     body = {k: v for k, v in body.items() if v not in ("", [], {}, None)}
     r = cloud_post("/instance-operations/launch", body)
+
     if not r.ok:
+        print(f"[DEBUG] Launch response text: {r.text}")
         return (r.text, r.status_code, {"Content-Type": "application/json"})
 
-    payload = r.json()
+    try:
+        payload = r.json()
+    except Exception as e:
+        return (
+            jsonify({"status": "error", "message": "Invalid JSON in launch response"}),
+            500,
+        )
+
     instance_id = extract_instance_id(payload)
     if not instance_id:
-        return jsonify({"status": "error", "message": "No instance id in launch response"}), 500
+        return (
+            jsonify(
+                {"status": "error", "message": "No instance id in launch response"}
+            ),
+            500,
+        )
 
     # 2) Get public IP
     try:
@@ -628,21 +708,25 @@ def launch_and_setup():
 
         scp.close()
         ssh.close()
+
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
     # ✅ SIMPLE FINAL RESPONSE
-    return jsonify({
-        "status": "ready",
-        "message": "GPU setup done",
-        "ip": ip,
-        "instance_id": instance_id
-    })
+    return jsonify(
+        {
+            "ip": ip,
+            "status": "ready",
+            "message": "GPU setup done",
+            "instance_id": instance_id,
+        }
+    )
 
 
 # ===============================
 # FLASK ROUTES - FILE OPERATIONS
 # ===============================
+
 
 @app.post("/lambda/upload-video-and-run")
 def api_upload_video_and_run():
@@ -662,6 +746,7 @@ def api_upload_video_and_run():
         return jsonify(result)
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
 
 @app.post("/lambda/replace-file")
 def api_replace_file():
@@ -704,50 +789,98 @@ def api_download_output():
     """
     try:
         ip = request.args.get("ip") or None
+        file_type = (
+            request.args.get("type") or "both"
+        ).lower()  # 'video', 'csv', or 'both'
 
         # Clear and recreate local downloads folder for clean state
         if os.path.exists(DOWNLOADS_DIR):
             import shutil
+
             shutil.rmtree(DOWNLOADS_DIR)
             print(f"Cleared existing downloads directory: {DOWNLOADS_DIR}")
-        
         os.makedirs(DOWNLOADS_DIR, exist_ok=True)
         print(f"Created fresh downloads directory: {DOWNLOADS_DIR}")
 
-        # fixed video output name
-        video_name = OUTPUT_DEFAULT_NAME  # e.g., "output_detr_motion_filtered.mp4"
+        video_local = None
+        csv_local = None
 
-        # 1) pull the video file
-        video_local = pull_remote_file(ip=ip, remote_filename=video_name)
-        if not os.path.exists(video_local):
-            return jsonify({"status": "error", "message": f"Video not found: {video_local}"}), 404
+        # Get video if requested or both
+        if file_type in ("video", "both"):
+            video_name = OUTPUT_DEFAULT_NAME
+            video_local = pull_remote_file(ip=ip, remote_filename=video_name)
+            if not os.path.exists(video_local):
+                return (
+                    jsonify(
+                        {
+                            "status": "error",
+                            "message": f"Video not found: {video_local}",
+                        }
+                    ),
+                    404,
+                )
 
-        # 2) find a .csv file on the remote
-        ssh, scp = _mk_ssh(ip or get_saved_ip())
-        try:
-            code, out, err = _sh(ssh, f"ls -1 {REMOTE_DIR}/*.csv 2>/dev/null | head -n 1")
-            csv_remote = out.strip()
-        finally:
-            try: scp.close()
-            except Exception: pass
-            try: ssh.close()
-            except Exception: pass
+        # Get CSV if requested or both
+        if file_type in ("csv", "both"):
+            ssh, scp = _mk_ssh(ip or get_saved_ip())
+            try:
+                code, out, err = _sh(
+                    ssh, f"ls -1 {REMOTE_DIR}/*.csv 2>/dev/null | head -n 1"
+                )
+                csv_remote = out.strip()
+            finally:
+                try:
+                    scp.close()
+                except Exception:
+                    pass
+                try:
+                    ssh.close()
+                except Exception:
+                    pass
 
-        if not csv_remote:
-            return jsonify({"status": "error", "message": "No CSV file found in remote directory"}), 404
+            if not csv_remote:
+                return (
+                    jsonify(
+                        {
+                            "status": "error",
+                            "message": "No CSV file found in remote directory",
+                        }
+                    ),
+                    404,
+                )
 
-        csv_name = os.path.basename(csv_remote)
-        csv_local = pull_remote_file(ip=ip, remote_filename=csv_name)
+            csv_name = os.path.basename(csv_remote)
+            csv_local = pull_remote_file(ip=ip, remote_filename=csv_name)
+            if not os.path.exists(csv_local):
+                return (
+                    jsonify(
+                        {"status": "error", "message": f"CSV not found: {csv_local}"}
+                    ),
+                    404,
+                )
 
-        # 3) build a ZIP with both files
-        tmp_dir = tempfile.mkdtemp(prefix="outputs_")
-        zip_path = os.path.join(tmp_dir, "outputs_bundle.zip")
-
-        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            zf.write(video_local, arcname=os.path.basename(video_local))
-            zf.write(csv_local, arcname=os.path.basename(csv_local))
-
-        return send_file(zip_path, as_attachment=True, download_name="outputs_bundle.zip")
+        # Return single file or ZIP
+        if file_type == "video":
+            return send_file(
+                video_local,
+                as_attachment=True,
+                download_name=os.path.basename(video_local),
+            )
+        elif file_type == "csv":
+            return send_file(
+                csv_local, as_attachment=True, download_name=os.path.basename(csv_local)
+            )
+        else:
+            tmp_dir = tempfile.mkdtemp(prefix="outputs_")
+            zip_path = os.path.join(tmp_dir, "outputs_bundle.zip")
+            with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                if video_local:
+                    zf.write(video_local, arcname=os.path.basename(video_local))
+                if csv_local:
+                    zf.write(csv_local, arcname=os.path.basename(csv_local))
+            return send_file(
+                zip_path, as_attachment=True, download_name="outputs_bundle.zip"
+            )
 
     except FileNotFoundError as e:
         return jsonify({"status": "error", "message": str(e)}), 404
@@ -763,18 +896,29 @@ def upload_video():
     Expects multipart/form-data with 'video' file field.
     """
     try:
-        if 'video' not in request.files:
-            return jsonify({"status": "error", "message": "No video file provided"}), 400
+        if "video" not in request.files:
+            return (
+                jsonify({"status": "error", "message": "No video file provided"}),
+                400,
+            )
 
-        file = request.files['video']
-        if file.filename == '':
+        file = request.files["video"]
+        if file.filename == "":
             return jsonify({"status": "error", "message": "No file selected"}), 400
 
         # Validate file type (we still check extensions, but we ALWAYS save as .mp4 filename)
-        allowed_extensions = {'.mp4', '.mov', '.avi'}
+        allowed_extensions = {".mp4", ".mov", ".avi"}
         orig_ext = os.path.splitext(file.filename)[1].lower()
         if orig_ext not in allowed_extensions:
-            return jsonify({"status": "error", "message": "Invalid file type. Only MP4, MOV, AVI allowed"}), 400
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": "Invalid file type. Only MP4, MOV, AVI allowed",
+                    }
+                ),
+                400,
+            )
 
         # Ensure input-video directory exists
         os.makedirs(INPUT_VIDEO_DIR, exist_ok=True)
@@ -783,12 +927,14 @@ def upload_video():
         fixed_path = os.path.join(INPUT_VIDEO_DIR, FIXED_VIDEO_BASENAME)
         file.save(fixed_path)  # overwrites if exists
 
-        return jsonify({
-            "status": "ok",
-            "message": "Video uploaded successfully",
-            "filename": FIXED_VIDEO_BASENAME,  # report the fixed name
-            "path": fixed_path
-        })
+        return jsonify(
+            {
+                "status": "ok",
+                "message": "Video uploaded successfully",
+                "filename": FIXED_VIDEO_BASENAME,  # report the fixed name
+                "path": fixed_path,
+            }
+        )
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -798,7 +944,7 @@ def upload_video():
 def api_set_direction_orientation():
     """
     Set the direction orientation for the detector.
-    
+
     JSON body:
     {
       "action": "rotate_clockwise" | "rotate_counterclockwise" | "get_current"
@@ -807,53 +953,56 @@ def api_set_direction_orientation():
     try:
         body = request.get_json(silent=True) or {}
         action = body.get("action")
-        
+
         if not action:
             return jsonify({"status": "error", "message": "Action required"}), 400
-            
+
         # Store the orientation state (you might want to persist this)
-        if not hasattr(app, 'direction_orientation'):
-            app.direction_orientation = 0  # 0=North up, 1=East up, 2=South up, 3=West up
-            
+        if not hasattr(app, "direction_orientation"):
+            app.direction_orientation = (
+                0  # 0=North up, 1=East up, 2=South up, 3=West up
+            )
+
         base_directions = ["North", "East", "South", "West"]
-        
+
         if action == "rotate_clockwise":
             app.direction_orientation = (app.direction_orientation + 1) % 4
         elif action == "rotate_counterclockwise":
             app.direction_orientation = (app.direction_orientation - 1) % 4
         elif action != "get_current":
             return jsonify({"status": "error", "message": "Invalid action"}), 400
-            
+
         # Get current mapping
         current_directions = [
-            base_directions[app.direction_orientation],                    # top
-            base_directions[(app.direction_orientation + 1) % 4],         # right  
-            base_directions[(app.direction_orientation + 2) % 4],         # bottom
-            base_directions[(app.direction_orientation + 3) % 4]          # left
+            base_directions[app.direction_orientation],  # top
+            base_directions[(app.direction_orientation + 1) % 4],  # right
+            base_directions[(app.direction_orientation + 2) % 4],  # bottom
+            base_directions[(app.direction_orientation + 3) % 4],  # left
         ]
-        
+
         mapping = {
             "top": current_directions[0],
             "right": current_directions[1],
             "bottom": current_directions[2],
-            "left": current_directions[3]
+            "left": current_directions[3],
         }
-        
-        return jsonify({
-            "status": "ok",
-            "orientation": app.direction_orientation,
-            "mapping": mapping
-        })
-        
+
+        return jsonify(
+            {
+                "status": "ok",
+                "orientation": app.direction_orientation,
+                "mapping": mapping,
+            }
+        )
+
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
-
-
 
 
 # ===============================
 # INSTANCE TERMINATION
 # ===============================
+
 
 def terminate_saved_instance():
     """
@@ -863,26 +1012,28 @@ def terminate_saved_instance():
     instance_id, ip = load_instance_info()
     if not instance_id:
         raise ValueError("No saved instance found. Check instance_info.txt file.")
-    
+
     # Call Lambda Cloud API to terminate
     body = {"instance_ids": [instance_id]}
     r = cloud_post("/instance-operations/terminate", body)
-    
+
     if not r.ok:
         raise RuntimeError(f"Failed to terminate instance {instance_id}: {r.text}")
-    
+
     return r.json(), instance_id, ip
+
 
 # ===============================
 # FLASK ROUTE - INSTANCE TERMINATION
 # ===============================
+
 
 @app.post("/lambda/terminate-instance")
 def api_terminate_instance():
     """
     Terminate the saved instance using ID from instance_info.txt.
     Cleans up the instance_info.txt file after successful termination.
-    
+
     Returns:
       - 200: Instance terminated successfully
       - 404: No saved instance found
@@ -890,7 +1041,7 @@ def api_terminate_instance():
     """
     try:
         response_data, instance_id, ip = terminate_saved_instance()
-        
+
         # Clean up instance_info.txt after successful termination
         try:
             if os.path.exists(INSTANCE_INFO_FILE):
@@ -898,25 +1049,32 @@ def api_terminate_instance():
                 print(f"Cleaned up instance info file: {INSTANCE_INFO_FILE}")
         except Exception as e:
             print(f"Warning: Could not remove instance info file: {e}")
-        
-        return jsonify({
-            "status": "ok",
-            "message": "Instance terminated successfully",
-            "instance_id": instance_id,
-            "ip": ip,
-            "lambda_response": response_data
-        })
-        
+
+        return jsonify(
+            {
+                "status": "ok",
+                "message": "Instance terminated successfully",
+                "instance_id": instance_id,
+                "ip": ip,
+                "lambda_response": response_data,
+            }
+        )
+
     except ValueError as e:
         return jsonify({"status": "error", "message": str(e)}), 404
     except RuntimeError as e:
         return jsonify({"status": "error", "message": str(e)}), 500
     except Exception as e:
-        return jsonify({"status": "error", "message": f"Unexpected error: {str(e)}"}), 500
+        return (
+            jsonify({"status": "error", "message": f"Unexpected error: {str(e)}"}),
+            500,
+        )
+
 
 # ===============================
 # LIST + TERMINATE (SINGLE)
 # ===============================
+
 
 @app.get("/lambda/instances")
 def api_list_instances():
@@ -966,7 +1124,9 @@ def api_terminate_by_id():
         if not instance_id:
             return jsonify({"status": "error", "message": "instance_id required"}), 400
 
-        r = cloud_post("/instance-operations/terminate", {"instance_ids": [instance_id]})
+        r = cloud_post(
+            "/instance-operations/terminate", {"instance_ids": [instance_id]}
+        )
         if not r.ok:
             return (r.text, r.status_code, {"Content-Type": "application/json"})
 
@@ -978,11 +1138,13 @@ def api_terminate_by_id():
             except Exception:
                 pass
 
-        return jsonify({
-            "status": "ok",
-            "message": f"Instance {instance_id} terminated",
-            "lambda_response": r.json()
-        })
+        return jsonify(
+            {
+                "status": "ok",
+                "message": f"Instance {instance_id} terminated",
+                "lambda_response": r.json(),
+            }
+        )
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
