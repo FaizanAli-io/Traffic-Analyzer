@@ -20,7 +20,7 @@ LAMBDA_BASE_URL = "https://cloud.lambdalabs.com/api/v1"
 REGION_NAME = "us-east-3"
 SSH_KEY_NAMES = ["Desktop-Pc"]
 INSTANCE_NAME = "traffic-analysis"
-INSTANCE_TYPE_NAME = "gpu_1x_gh200"
+INSTANCE_TYPE_NAME = "gpu_8x_a100"
 FIREWALL_RULESETS = [{"id": "7093760c5d4e4df2bf8584ae791526c4"}]
 
 # SSH config (update with your key and username)
@@ -665,6 +665,7 @@ def launch_and_setup():
     r = cloud_post("/instance-operations/launch", body)
 
     if not r.ok:
+        print(f"[DEBUG] Launch request body: {body}")
         print(f"[DEBUG] Launch response text: {r.text}")
         return (r.text, r.status_code, {"Content-Type": "application/json"})
 
