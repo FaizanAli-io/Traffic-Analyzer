@@ -1,3 +1,3 @@
 cd .\backend\
 call .\.venv\Scripts\activate
-call python .\script.py
+call python -m server.app
