@@ -15,11 +15,22 @@ export const authAPI = {
 // GPU Instance Management API
 export const gpuAPI = {
   // Launch a new GPU instance
-  launchInstance: async () => {
+  launchInstance: async (opts = {}) => {
+    const payload = {};
+    if (opts.region_name) payload.region_name = opts.region_name;
+    if (opts.instance_type_name) payload.instance_type_name = opts.instance_type_name;
     const response = await fetch(`${API_BASE}/lambda/launch-and-setup`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" }
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
     });
+    const data = await response.json().catch(() => ({}));
+    return { response, data };
+  },
+
+  // Fetch types
+  listInstanceTypes: async () => {
+    const response = await fetch(`${API_BASE}/lambda/instance-types`);
     const data = await response.json().catch(() => ({}));
     return { response, data };
   },

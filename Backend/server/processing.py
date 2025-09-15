@@ -1,16 +1,12 @@
 import os
-import tempfile
-import zipfile
 from .config import (
-    DOWNLOADS_DIR,
-    INPUT_VIDEO_DIR,
-    OUTPUT_DEFAULT_NAME,
+    ROOT_DIR,
     REMOTE_DIR,
     REMOTE_VENV,
-    REMOTE_SCRIPT_NAME,
+    DOWNLOADS_DIR,
+    INPUT_VIDEO_DIR,
     REMOTE_REQ_NAME,
     REMOTE_VIDEO_NAME,
-    ROOT_DIR,
 )
 from .instance_info import get_saved_ip
 from .ssh_utils import make_ssh, sh, wait_for_ssh
@@ -31,17 +27,32 @@ def bootstrap_system_and_venv(ssh):
 
 
 def upload_code_and_requirements_from_cwd(ssh, scp):
-    # Use backend root so this works regardless of current working directory
-    local_script = os.path.join(ROOT_DIR, "detr_motion.py")
+    """Upload the analyzer package (backend/analyzer) and requirements to the remote.
+
+    We no longer upload detr_motion.py directly. Instead, we place the minimal
+    package structure so the remote can run `python -m backend.analyzer`.
+    """
+    # Paths in local backend folder
+    backend_pkg_init = os.path.join(ROOT_DIR, "__init__.py")
+    analyzer_dir = os.path.join(ROOT_DIR, "analyzer")
     local_req = os.path.join(ROOT_DIR, "remote-requirements.txt")
-    if not os.path.exists(local_script):
-        raise FileNotFoundError(
-            f"Expected file not found in current dir: {local_script}"
-        )
+
+    # Validate expected files/folders
+    if not os.path.exists(backend_pkg_init):
+        raise FileNotFoundError(f"Missing backend __init__.py: {backend_pkg_init}")
+    if not os.path.isdir(analyzer_dir):
+        raise FileNotFoundError(f"Missing analyzer package directory: {analyzer_dir}")
     if not os.path.exists(local_req):
-        raise FileNotFoundError(f"Expected file not found in current dir: {local_req}")
-    sh(ssh, f"mkdir -p {REMOTE_DIR}")
-    scp.put(local_script, f"{REMOTE_DIR}/{REMOTE_SCRIPT_NAME}")
+        raise FileNotFoundError(f"Expected file not found: {local_req}")
+
+    # Ensure remote structure exists
+    sh(ssh, f"mkdir -p {REMOTE_DIR}/backend")
+
+    # Upload backend package init and analyzer directory recursively
+    scp.put(backend_pkg_init, f"{REMOTE_DIR}/backend/__init__.py")
+    scp.put(analyzer_dir, f"{REMOTE_DIR}/backend/", recursive=True)
+
+    # Upload requirements for remote pip install
     scp.put(local_req, f"{REMOTE_DIR}/{REMOTE_REQ_NAME}")
 
 
@@ -55,9 +66,10 @@ def pip_install_requirements(ssh):
 
 
 def run_script(ssh):
+    # Run analyzer as a module so Python can resolve backend/analyzer package
     code, out, err = sh(
         ssh,
-        f"cd {REMOTE_DIR} && source {REMOTE_VENV}/bin/activate && python {REMOTE_SCRIPT_NAME}",
+        f"cd {REMOTE_DIR} && source {REMOTE_VENV}/bin/activate && python -m backend.analyzer",
     )
     if code != 0:
         raise RuntimeError(f"Script failed\nSTDOUT:\n{out}\nSTDERR:\n{err}")
@@ -109,12 +121,14 @@ def upload_video_and_run(
         remote_path = f"{REMOTE_DIR}/{REMOTE_VIDEO_NAME}"
         scp.put(local_path, remote_path)
 
-        remote_log = f"{REMOTE_DIR}/detr_motion.log"
+        remote_log = (
+            f"{REMOTE_DIR}/detr_motion.log"  # keep legacy log name for continuity
+        )
         cmd = (
             f"cd {REMOTE_DIR} && "
             f"source {REMOTE_VENV}/bin/activate && "
             f"pip install --no-cache-dir -r {REMOTE_REQ_NAME} && "
-            f"python {REMOTE_SCRIPT_NAME} --direction-orientation {direction_orientation} "
+            f"python -m backend.analyzer --direction-orientation {direction_orientation} "
             f"> {remote_log} 2>&1"
         )
         code, out, err = sh(ssh, cmd)

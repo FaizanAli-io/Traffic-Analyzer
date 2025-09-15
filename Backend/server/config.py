@@ -8,10 +8,8 @@ load_dotenv()
 LAMBDA_API_KEY = os.getenv("LAMBDA_API_KEY")
 LAMBDA_BASE_URL = "https://cloud.lambdalabs.com/api/v1"
 
-REGION_NAME = "us-east-3"
 SSH_KEY_NAMES = ["Desktop-Pc"]
 INSTANCE_NAME = "traffic-analysis"
-INSTANCE_TYPE_NAME = "gpu_8x_a100"
 FIREWALL_RULESETS = [{"id": "7093760c5d4e4df2bf8584ae791526c4"}]
 
 # SSH config
@@ -36,7 +34,6 @@ ENV_PASSWORD = os.getenv("PASSWORD", "")
 # Remote
 REMOTE_DIR = "/home/ubuntu/myjob"
 REMOTE_VENV = f"{REMOTE_DIR}/venv"
-REMOTE_SCRIPT_NAME = "detr_motion.py"
 REMOTE_REQ_NAME = "requirements.txt"
 REMOTE_VIDEO_NAME = "input_video_4.mp4"
 

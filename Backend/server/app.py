@@ -1,15 +1,13 @@
 import os
-import tempfile
 import zipfile
-from flask import Flask, jsonify, request, send_file
+import tempfile
 from flask_cors import CORS
+from flask import Flask, jsonify, request, send_file
 
 from .config import (
     LAMBDA_API_KEY,
-    REGION_NAME,
     SSH_KEY_NAMES,
     INSTANCE_NAME,
-    INSTANCE_TYPE_NAME,
     FIREWALL_RULESETS,
     DOWNLOADS_DIR,
     INPUT_VIDEO_DIR,
@@ -86,16 +84,44 @@ def list_instance_types():
 
 @app.post("/lambda/launch-and-setup")
 def launch_and_setup():
+    # Requires client-provided region_name and instance_type_name; uses fixed INSTANCE_NAME
+    try:
+        incoming = request.get_json(silent=True) or {}
+    except Exception:
+        incoming = {}
+
+    region_name = (incoming.get("region_name") or "").strip()
+    instance_type_name = (incoming.get("instance_type_name") or "").strip()
+
+    # Validate required fields
+    missing = []
+    if not region_name:
+        missing.append("region_name")
+    if not instance_type_name:
+        missing.append("instance_type_name")
+    if missing:
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": "Missing required field(s): " + ", ".join(missing),
+                }
+            ),
+            400,
+        )
+
     body = {
         "name": INSTANCE_NAME,
-        "region_name": REGION_NAME,
+        "region_name": region_name,
         "ssh_key_names": SSH_KEY_NAMES,
-        "firewall_rulesets": FIREWALL_RULESETS,
-        "instance_type_name": INSTANCE_TYPE_NAME,
+        # "firewall_rulesets": FIREWALL_RULESETS,
+        "instance_type_name": instance_type_name,
     }
     body = {k: v for k, v in body.items() if v not in ("", [], {}, None)}
     r = cloud_post("/instance-operations/launch", body)
     if not r.ok:
+        print(f"[DEBUG] Request body: {body}")
+        print(f"[DEBUG] Launch failed: {r.status_code} {r.text}")
         return (r.text, r.status_code, {"Content-Type": "application/json"})
     try:
         payload = r.json()
