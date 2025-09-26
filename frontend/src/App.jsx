@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import Login from "./components/Login/Login.jsx";
 import Dashboard from "./components/Dashboard/Dashboard.jsx";
@@ -12,7 +12,7 @@ function App() {
   useEffect(() => {
     const checkAuth = () => {
       try {
-        const userSession = localStorage.getItem('userSession');
+        const userSession = localStorage.getItem("userSession");
         if (userSession) {
           const sessionData = JSON.parse(userSession);
           setIsAuthenticated(sessionData?.isLoggedIn === true);
@@ -20,7 +20,7 @@ function App() {
           setIsAuthenticated(false);
         }
       } catch (error) {
-        console.error('Error checking authentication:', error);
+        console.error("Error checking authentication:", error);
         setIsAuthenticated(false);
       } finally {
         setIsLoading(false);
@@ -31,7 +31,7 @@ function App() {
 
     // Listen for storage changes (in case user logs out in another tab)
     const handleStorageChange = (e) => {
-      if (e.key === 'userSession') {
+      if (e.key === "userSession") {
         if (e.newValue === null) {
           // Session was removed
           setIsAuthenticated(false);
@@ -41,15 +41,15 @@ function App() {
             const sessionData = JSON.parse(e.newValue);
             setIsAuthenticated(sessionData?.isLoggedIn === true);
           } catch (error) {
-            console.error('Error parsing session data:', error);
+            console.error("Error parsing session data:", error);
             setIsAuthenticated(false);
           }
         }
       }
     };
 
-    window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
   }, []);
 
   const handleLogin = () => {
@@ -58,7 +58,7 @@ function App() {
 
   const handleLogout = () => {
     // Clear localStorage first
-    localStorage.removeItem('userSession');
+    localStorage.removeItem("userSession");
     // Then update state
     setIsAuthenticated(false);
   };
@@ -66,45 +66,61 @@ function App() {
   // Show loading spinner while checking authentication
   if (isLoading) {
     return (
-      <div style={{
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        height: '100vh',
-        fontSize: '18px'
-      }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "100vh",
+          fontSize: "18px"
+        }}
+      >
         Loading...
       </div>
     );
   }
 
   return (
-    <Router>
-      <Routes>
-        {/* Public routes - redirect to dashboard if already authenticated */}
-        <Route 
-          path="/" 
-          element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Login onLogin={handleLogin} />} 
-        />
-        <Route 
-          path="/login" 
-          element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Login onLogin={handleLogin} />} 
-        />
+    <div>
+      <Router>
+        <Routes>
+          {/* Public routes - redirect to dashboard if already authenticated */}
+          <Route
+            path="/"
+            element={
+              isAuthenticated ? (
+                <Navigate to="/dashboard" replace />
+              ) : (
+                <Login onLogin={handleLogin} />
+              )
+            }
+          />
+          <Route
+            path="/login"
+            element={
+              isAuthenticated ? (
+                <Navigate to="/dashboard" replace />
+              ) : (
+                <Login onLogin={handleLogin} />
+              )
+            }
+          />
 
-        {/* Protected routes */}
-        <Route 
-          path="/dashboard" 
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
-              <Dashboard onLogout={handleLogout} />
-            </ProtectedRoute>
-          } 
-        />
+          {/* Protected routes */}
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated}>
+                <Dashboard onLogout={handleLogout} />
+              </ProtectedRoute>
+            }
+          />
 
-        {/* Redirect unknown routes to login */}
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
-    </Router>
+          {/* Redirect unknown routes to login */}
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        </Routes>
+      </Router>
+    </div>
   );
 }
 
