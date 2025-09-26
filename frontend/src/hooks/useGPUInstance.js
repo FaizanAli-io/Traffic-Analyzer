@@ -2,26 +2,23 @@ import { useEffect, useState } from "react";
 import { gpuAPI } from "../services/api";
 
 export const useGPUInstance = (onIpChange) => {
-  const [isLaunching, setIsLaunching] = useState(false);
+  const [ip, setIp] = useState("");
   const [launchMsg, setLaunchMsg] = useState("");
   const [launchErr, setLaunchErr] = useState("");
-  const [ip, setIp] = useState("");
+  const [isLaunching, setIsLaunching] = useState(false);
 
-  // Selection state
+  const [options, setOptions] = useState([]);
   const [regionName, setRegionName] = useState("");
   const [instanceTypeName, setInstanceTypeName] = useState("");
   const [isLoadingOptions, setIsLoadingOptions] = useState(false);
-  // Single source of truth for options; derive the rest
-  // Shape: [{ name, regions: [string], info: { description, gpu_description, price_cents_per_hour, specs } }]
-  const [options, setOptions] = useState([]);
 
-  const [isTerminating, setIsTerminating] = useState(false);
   const [terminateMsg, setTerminateMsg] = useState("");
   const [terminateErr, setTerminateErr] = useState("");
+  const [isTerminating, setIsTerminating] = useState(false);
 
-  const [isRunning, setIsRunning] = useState(false);
   const [runMsg, setRunMsg] = useState("");
   const [runErr, setRunErr] = useState("");
+  const [isRunning, setIsRunning] = useState(false);
 
   const updateIp = (newIp) => {
     setIp(newIp);
@@ -56,7 +53,6 @@ export const useGPUInstance = (onIpChange) => {
     }
   };
 
-  // Load options from backend (normalize to a simple array)
   const loadOptions = async () => {
     setIsLoadingOptions(true);
     try {
@@ -107,13 +103,17 @@ export const useGPUInstance = (onIpChange) => {
         }
       }
 
-      // Filter to only types with capacity and sort by name
       const filtered = normalized
         .filter((t) => t.regions && t.regions.length > 0)
-        .sort((a, b) => a.name.localeCompare(b.name));
+        .sort((a, b) => {
+          const ap = a.info?.price_cents_per_hour;
+          const bp = b.info?.price_cents_per_hour;
+          if (typeof ap === "number" && typeof bp === "number" && ap !== bp) return ap - bp;
+
+          return a.name.localeCompare(b.name);
+        });
       setOptions(filtered);
 
-      // Defaults: prefer existing selections if still valid, else pick the first available
       const currentTypeValid =
         instanceTypeName && filtered.some((t) => t.name === instanceTypeName);
       const chosenType = currentTypeValid ? instanceTypeName : filtered[0]?.name || "";
@@ -124,20 +124,17 @@ export const useGPUInstance = (onIpChange) => {
       const currentRegionValid = regionName && regsForType.includes(regionName);
       if (!currentRegionValid) setRegionName(regsForType[0] || "");
     } catch (e) {
-      // Non-fatal for UI; keep prior values
       console.warn("Failed to load instance options:", e);
     } finally {
       setIsLoadingOptions(false);
     }
   };
 
-  // When instance type changes, recompute available regions and default selection
   useEffect(() => {
     if (!instanceTypeName) return;
     const selected = options.find((t) => t.name === instanceTypeName);
     const regs = selected?.regions || [];
     if (!regionName || !regs.includes(regionName)) setRegionName(regs[0] || "");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instanceTypeName, options]);
 
   const terminateInstance = async () => {
@@ -185,7 +182,6 @@ export const useGPUInstance = (onIpChange) => {
   };
 
   return {
-    // State
     isLaunching,
     launchMsg,
     launchErr,
@@ -196,7 +192,6 @@ export const useGPUInstance = (onIpChange) => {
     availableInstanceTypes: options.map((t) => t.name),
     isLoadingOptions,
     selectedTypeInfo: options.find((t) => t.name === instanceTypeName)?.info,
-    // Expose a simple map so UI can show prices in the dropdown
     typeInfoByName: Object.fromEntries(options.map((t) => [t.name, t.info])),
     isTerminating,
     terminateMsg,
@@ -205,7 +200,6 @@ export const useGPUInstance = (onIpChange) => {
     runMsg,
     runErr,
 
-    // Actions
     startGpu,
     setRegionName,
     setInstanceTypeName,

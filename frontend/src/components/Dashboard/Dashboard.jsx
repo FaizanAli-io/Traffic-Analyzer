@@ -7,13 +7,13 @@ import InstancesTable from "./sections/InstancesTable";
 import DownloadResults from "./sections/DownloadResults";
 import DirectionMapping from "./sections/DirectionMapping";
 
-const Dashboard = () => {
+const Dashboard = ({ onLogout }) => {
   const navigate = useNavigate();
   const [ip, setIp] = useState("");
 
   const handleLogout = () => {
-    localStorage.removeItem("userSession");
-    navigate("/");
+    onLogout ? onLogout() : localStorage.removeItem("userSession");
+    navigate("/login");
   };
 
   return (

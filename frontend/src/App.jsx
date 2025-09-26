@@ -84,17 +84,11 @@ function App() {
     <div>
       <Router>
         <Routes>
-          {/* Public routes - redirect to dashboard if already authenticated */}
           <Route
             path="/"
-            element={
-              isAuthenticated ? (
-                <Navigate to="/dashboard" replace />
-              ) : (
-                <Login onLogin={handleLogin} />
-              )
-            }
+            element={<Navigate to={isAuthenticated ? "/dashboard" : "/login"} replace />}
           />
+
           <Route
             path="/login"
             element={
