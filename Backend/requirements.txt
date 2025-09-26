@@ -4,3 +4,4 @@ python-dotenv
 paramiko
 flask-cors
 scp
+flask-restx
