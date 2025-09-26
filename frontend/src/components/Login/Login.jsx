@@ -27,7 +27,7 @@ function Login({ onLogin }) {
     setErrors({});
 
     try {
-      const resp = await fetch(`${API_BASE}/login`, {
+      const resp = await fetch(`${API_BASE}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: username.trim(), password })
