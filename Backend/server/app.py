@@ -44,7 +44,7 @@ app = Flask(__name__)
 
 # Configure CORS first, before API initialization
 CORS(app, resources={
-    r"/api/*": {
+    r"/*": {
         "origins": [
             "http://localhost:5173", 
             "http://127.0.0.1:5173", 
@@ -63,8 +63,8 @@ api = Api(
     version="1.0",
     title="Lambda Instance Management API",
     description="API for managing cloud instances and video processing",
-    prefix="/api",          # <— all routes now under /api/...
-    doc="/api/docs"         # <— Swagger UI at /api/docs
+         
+    doc="/docs"         # <— Swagger UI at /api/docs
 )
 
 # Define namespaces for better organization
