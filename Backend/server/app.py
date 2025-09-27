@@ -44,22 +44,22 @@ app = Flask(__name__)
 
 # Configure CORS first, before API initialization
 CORS(app, resources={
-    r"/*": {
-        "origins": ["http://localhost:5173", "http://127.0.0.1:5173"],
+    r"/api/*": {
+        "origins": ["http://localhost:5173", "http://127.0.0.1:5173", "http://13.60.19.75"],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
         "supports_credentials": True
     }
 })
 
-# Configure Swagger API
+# Mount API and Swagger under /api
 api = Api(
     app,
-    version='1.0',
-    title='Lambda Instance Management API',
-    description='API for managing cloud instances and video processing',
-    doc='/docs/',  # Swagger UI will be available at /docs/
-    prefix='/'
+    version="1.0",
+    title="Lambda Instance Management API",
+    description="API for managing cloud instances and video processing",
+    prefix="/api",          # <— all routes now under /api/...
+    doc="/api/docs"         # <— Swagger UI at /api/docs
 )
 
 # Define namespaces for better organization
