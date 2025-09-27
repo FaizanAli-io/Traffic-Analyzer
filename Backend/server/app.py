@@ -45,13 +45,18 @@ app = Flask(__name__)
 # Configure CORS first, before API initialization
 CORS(app, resources={
     r"/api/*": {
-        "origins": ["http://localhost:5173", "http://127.0.0.1:5173", "http://13.60.19.75"],
+        "origins": [
+            "http://localhost:5173", 
+            "http://127.0.0.1:5173", 
+            "http://13.60.19.75",
+            "http://13.60.19.75:5000",  # Add direct backend access
+            "*"  # Allow all origins for development (remove in production)
+        ],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
         "supports_credentials": True
     }
 })
-
 # Mount API and Swagger under /api
 api = Api(
     app,
